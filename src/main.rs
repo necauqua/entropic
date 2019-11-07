@@ -1,17 +1,18 @@
 use std::error::Error;
-use std::io::{Read, Write};
+use std::io::{Read, Write, stdout};
 
-use entropic::ansi::ansi;
-use entropic::raw::raw;
+use entropic::term::*;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let mut stdin = std::io::stdin();
 
-    let mut stdout = ansi(raw(std::io::stdout())?);
+    let mut stdout = stdout()
+        .raw()?
+        .alt_screen()?
+        .mouse_input()?
+        .cursor_control();
 
-    stdout.alt_screen(true)?;
-    stdout.cursor(false)?;
-    stdout.mouse_tracking(true)?;
+    stdout.set_cursor_hidden()?;
     stdout.flush()?;
 
     let mut state = 0;
@@ -69,7 +70,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 let y = buf[2] - 32;
 
                 if b == 0 || b == 32 {
-                    let p = "██";
+                    let p = "██▒▒";
 
                     write!(stdout, "\x1b[s\x1b[{1};{0}H{2}\x1b[u", (x - 1) / 2 * 2 + 1, y, p)?;
                     stdout.flush()?;
