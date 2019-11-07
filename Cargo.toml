@@ -5,4 +5,4 @@ authors = ['Anton Bulakh <self@necauqua.dev>']
 edition = '2018'
 
 [dependencies]
-termion = '1.5.3'
+libc = "0.2.65"
