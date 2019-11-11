@@ -80,11 +80,11 @@ impl<W: Write> CursorControl<W> {
         write!(self, "\x1b[u")
     }
 
-    pub fn cursor_move(&mut self, x: u32, y: u32) -> io::Result<()> {
+    pub fn cursor_move(&mut self, x: u16, y: u16) -> io::Result<()> {
         write!(self, "\x1b[{1};{0}H", x, y)
     }
 
-    pub fn write_at(&mut self, x: u32, y: u32, s: &str) -> io::Result<()> {
+    pub fn write_at(&mut self, x: u16, y: u16, s: &str) -> io::Result<()> {
         self.cursor_push()?;
         self.cursor_move(x, y)?;
         write!(self, "{}", s)?;
@@ -108,10 +108,10 @@ pub struct MouseInput<W: Write> {
 impl<W: Write> MouseInput<W> {
 
     pub fn listen_to_mouse(&mut self) -> io::Result<()> {
-        write!(self, "\x1b[?1002h")
+        write!(self, "\x1b[?1002h\x1b[?1006h")
     }
     pub fn dont_listen_to_mouse(&mut self) -> io::Result<()> {
-        write!(self, "\x1b[?1002l")
+        write!(self, "\x1b[?1002l\x1b[?1006l")
     }
 }
 

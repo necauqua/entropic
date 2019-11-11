@@ -1,10 +1,11 @@
 use std::error::Error;
-use std::io::{Read, Write, stdout};
+use std::io::{Write, stdout, stdin};
 
 use entropic::term::*;
+use entropic::input::{Events, Event, Modifiers, MouseButton};
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let mut stdin = std::io::stdin();
+    let mut input = Events::new(stdin());
 
     let mut stdout = stdout()
         .raw()?
@@ -15,76 +16,59 @@ fn main() -> Result<(), Box<dyn Error>> {
     stdout.set_cursor_hidden()?;
     stdout.flush()?;
 
-    let mut state = 0;
-
-    let mut x = 1;
-    let mut y = 1;
+    let mut x = 1u16;
+    let mut y = 1u16;
 
     loop {
-        let mut buf = [0; 1];
-        stdin.read_exact(&mut buf)?;
-        let byte = buf[0];
-
-        match byte {
-            3 | 113 => break, // Ctrl+C or Q to exit
-            12 => {           // Ctrl+L to clear the screen
-                write!(stdout, "\x1b[s\x1b[2J\x1b[3J\x1b[u")?;
-                stdout.flush()?;
-                state = 0;
-            }
-            27 if state == 0 => state = 1, // \e
-            91 if state == 1 => state = 2, // [
-            65 if state == 2 => {
-                stdout.write_at((x as u32 - 1) / 2 * 2 + 1, y as u32, "  ")?;
-                y -= 1;
-                stdout.write_at((x as u32 - 1) / 2 * 2 + 1, y as u32, "╺╸")?;
-
-                state = 0;
-            }
-            66 if state == 2 => {
-                stdout.write_at((x as u32 - 1) / 2 * 2 + 1, y as u32, "  ")?;
-                y += 1;
-                stdout.write_at((x as u32 - 1) / 2 * 2 + 1, y as u32, "╺╸")?;
-
-                state = 0;
-            }
-            67 if state == 2 => {
-                stdout.write_at((x as u32 - 1) / 2 * 2 + 1, y as u32, "  ")?;
-                x += 2;
-                stdout.write_at((x as u32 - 1) / 2 * 2 + 1, y as u32, "╺╸")?;
-
-                state = 0;
-            }
-            68 if state == 2 => {
-                stdout.write_at((x as u32 - 1) / 2 * 2 + 1, y as u32, "  ")?;
-                x -= 2;
-                stdout.write_at((x as u32 - 1) / 2 * 2 + 1, y as u32, "╺╸")?;
-
-                state = 0;
-            }
-            77 if state == 2 => {          // M
-                let mut buf = [0; 3];
-                stdin.read_exact(&mut buf)?;
-                let b = buf[0] - 32;
-                let x = buf[1] - 32;
-                let y = buf[2] - 32;
-
-                if b == 0 || b == 32 {
-                    let p = "██▒▒";
-
-                    write!(stdout, "\x1b[s\x1b[{1};{0}H{2}\x1b[u", (x - 1) / 2 * 2 + 1, y, p)?;
-                    stdout.flush()?;
+        match input.next() {
+            Ok(event) => {
+                match event {
+                    Event::Press('c', Modifiers::Ctrl) => break,
+                    Event::Press('q', Modifiers::None) => break,
+                    Event::Press('l', Modifiers::Ctrl) => {
+                        write!(stdout, "\x1b[2J\x1b[1;1H")?;
+                        stdout.flush()?;
+                    }
+                    Event::ArrowUp => {
+                        stdout.write_at((x - 1) / 2 * 2 + 1, y, "  ")?;
+                        y -= 1;
+                        stdout.write_at((x - 1) / 2 * 2 + 1, y, "╺╸")?;
+                    },
+                    Event::ArrowDown => {
+                        stdout.write_at((x - 1) / 2 * 2 + 1, y, "  ")?;
+                        y += 1;
+                        stdout.write_at((x - 1) / 2 * 2 + 1, y, "╺╸")?;
+                    },
+                    Event::ArrowRight => {
+                        stdout.write_at((x - 1) / 2 * 2 + 1, y, "  ")?;
+                        x += 2;
+                        stdout.write_at((x - 1) / 2 * 2 + 1, y, "╺╸")?;
+                    },
+                    Event::ArrowLeft => {
+                        stdout.write_at((x - 1) / 2 * 2 + 1, y, "  ")?;
+                        x -= 2;
+                        stdout.write_at((x - 1) / 2 * 2 + 1, y, "╺╸")?;
+                    },
+                    Event::Mouse(_, button, pos, _) => {
+                        match button {
+                            MouseButton::Left => {
+                                let p = "██▒▒";
+                                write!(stdout, "\x1b[s\x1b[{1};{0}H{2}\x1b[u", (pos.x - 1) / 2 * 2 + 1, pos.y, p)?;
+                                stdout.flush()?;
+                            },
+                            MouseButton::Right => {
+                                let p = "  ";
+                                stdout.write_at((pos.x - 1) / 2 * 2 + 1, pos.y, p)?;
+                            },
+                            _ => {}
+                        }
+                    }
+                    _event => {
+//                        print!("{:?}\n\x1b[999D", _event)
+                    },
                 }
-
-                if b == 2 || b == 34 {
-                    let p = "  ";
-
-                    stdout.write_at((x as u32 - 1) / 2 * 2 + 1, y as u32, p)?;
-                }
-
-                state = 0;
             }
-            _ => state = 0,
+            Err(e) => return Err(Box::new(e)),
         }
     }
 
