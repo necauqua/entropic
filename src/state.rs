@@ -15,7 +15,8 @@ pub struct Layer {
 
 #[derive(Debug)]
 pub struct Dimension {
-    width: u16, height: u16
+    pub width: u16,
+    pub height: u16
 }
 
 pub struct Picture {
@@ -31,6 +32,6 @@ impl Debug for Pixel {
 
 impl Debug for Picture {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
-        write!(f, "Picture { dimension: {}, layers.len(): {} }", self.dimension, self.layers.len())
+        write!(f, "Picture {{ dimension: {:?}, layers.len(): {} }}", self.dimension, self.layers.len())
     }
 }

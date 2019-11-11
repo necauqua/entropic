@@ -6,3 +6,4 @@ edition = '2018'
 
 [dependencies]
 termios = "0.3.1"
+signal-hook = "0.1.11"

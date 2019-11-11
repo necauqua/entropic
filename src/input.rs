@@ -3,6 +3,8 @@ use std::io::{ErrorKind, Read};
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
 
+use crate::state::Dimension;
+
 #[derive(Debug)]
 pub enum MouseButton {
     Left,
@@ -63,6 +65,8 @@ pub enum Event {
 
     Mouse(MouseAction, MouseButton, MousePosition, Modifiers),
     MouseWheel(MouseWheelDirection, MousePosition, Modifiers),
+
+    TerminalResize(Dimension),
 
     UnknownByteSequence(Vec<u8>),
 }
@@ -128,6 +132,23 @@ fn parse_input_sequence(bytes: &[u8]) -> Event {
         [53, 126] => Event::PgUp,
         [54, 126] => Event::PgDown,
 
+        _ if code.len() > 2 && code[0] == 56 && code[1] == 59 => {
+            let mut split = (&code[2..]).split(|&b| b == 59);
+            let h = split.next();
+            let w = split.next();
+            if split.next().is_none() && w.is_some() {
+                let w = w.unwrap();
+                if let Some((_, w)) = w.split_last() {
+                    let height = parse_decimal(h.unwrap());
+                    let width = parse_decimal(w);
+                    if height != 1000 && width != 1000 {
+                        return Event::TerminalResize(Dimension { width, height })
+                    }
+                }
+            }
+            Event::UnknownByteSequence(bytes.to_vec())
+        }
+
         _ if code.len() > 1 && code[0] == 60 => {
             let mut split = (&code[1..]).split(|&b| b == 59);
 
@@ -183,6 +204,8 @@ fn spawn_reader<R: Read + Send + 'static>(mut input: R, tx: Sender<io::Result<Ev
 
     // if you like super-rapidly click, then this would send some UnknownByteSequence's and
     // miss a couple of clicks but this is more than enough for everything to work fine
+
+    // okay, resize events happen too fast of this to be fine, TODO: redo this somehow
 
     thread::spawn(move || loop {
         // mouse event with both coords >100 takes 13 bytes, max found yet
