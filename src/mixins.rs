@@ -91,8 +91,3 @@ macro_rules! impl_output_mixin {
         }
     };
 }
-
-#[allow(unused_macros)]
-macro_rules! impl_input_mixin {
-    () => { /* TODO */ }
-}

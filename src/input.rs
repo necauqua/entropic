@@ -71,10 +71,6 @@ pub struct Events {
     rx: Receiver<io::Result<Event>>
 }
 
-pub trait EventSupplier {
-    fn events(&mut self) -> Events;
-}
-
 fn parse_decimal(bytes: &[u8]) -> u16 {
     if bytes.len() > 3 || bytes.len() == 0 {
         return 1000;
