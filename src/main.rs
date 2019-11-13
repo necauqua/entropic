@@ -4,8 +4,7 @@ use std::io::{Write, stdout, stdin};
 use entropic::term::*;
 use entropic::input::{Events, Event, Modifiers, MouseButton};
 use std::thread;
-use std::sync::mpsc;
-use std::sync::mpsc::Sender;
+use signal_hook::iterator::Signals;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let mut input = Events::new(stdin());
@@ -22,35 +21,16 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut x = 1u16;
     let mut y = 1u16;
 
-    let (tx, rx) = mpsc::channel();
-
+    let signals = Signals::new(&[signal_hook::SIGWINCH])?;
     thread::spawn(move || {
         let mut out = std::io::stdout();
-        loop {
-            rx.recv().expect("channel should not be closed from the signal hook side");
+        for _ in &signals {
             match write!(out, "\x1b[18t").and_then(|()| out.flush()) {
                 Err(_) => break,
                 _ => {},
             }
         }
     });
-
-    unsafe {
-        // you can't share the sender between threads and
-        // signal handler could be called from any thread afaiu
-        // well for me this works, and I would definitely do no better in C if you ask me
-        // as I am trying to understand this should actually be okay-ish, idk really
-
-        struct UnsafeSender(Sender<()>);
-        unsafe impl Sync for UnsafeSender {}
-        unsafe impl Send for UnsafeSender {}
-        let tx = UnsafeSender(tx);
-        signal_hook::register(signal_hook::SIGWINCH, move || {
-            // ignoring error result not to panic in the signal handler
-            // so if the channel closes we do nothing
-            let _ = tx.0.send(());
-        }).unwrap();
-    }
 
     loop {
         match input.next() {
@@ -97,7 +77,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                         }
                     }
                     _event => {
-                        print!("{:?}\n\x1b[999D", _event)
+                        write!(stdout, "{:?}\n\x1b[999D", _event);
+                        stdout.flush()?;
                     }
                 }
             }

@@ -1,9 +1,13 @@
 use std::io;
 use std::io::Write;
 use std::os::unix::io::AsRawFd;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread;
 
+use signal_hook::iterator::Signals;
 use termios::*;
 
+#[derive(Clone)]
 pub struct Raw<W: Write + AsRawFd> {
     prev_ios: Termios,
     output: W,
@@ -38,6 +42,7 @@ impl<W: Write + AsRawFd> Raw<W> {
     }
 }
 
+#[derive(Clone)]
 pub struct AltScreen<W: Write> {
     output: W
 }
@@ -60,6 +65,7 @@ impl_output_mixin! {
     }
 }
 
+#[derive(Clone)]
 pub struct CursorControl<W: Write> {
     output: W
 }
@@ -101,6 +107,7 @@ impl_output_mixin! {
     }
 }
 
+#[derive(Clone)]
 pub struct MouseInput<W: Write> {
     output: W
 }
@@ -110,6 +117,7 @@ impl<W: Write> MouseInput<W> {
     pub fn listen_to_mouse(&mut self) -> io::Result<()> {
         write!(self, "\x1b[?1002h\x1b[?1006h")
     }
+
     pub fn dont_listen_to_mouse(&mut self) -> io::Result<()> {
         write!(self, "\x1b[?1002l\x1b[?1006l")
     }
@@ -121,5 +129,43 @@ impl_output_mixin! {
         reset => dont_listen_to_mouse;
 
         fn mouse_input(self) -> io::Result<MouseInput<W>>;
+    }
+}
+
+pub struct TerminalResizes<W: Write> {
+    output: W,
+    enabled: AtomicBool
+}
+
+impl<W: Write> TerminalResizes<W> {
+
+    pub fn listen_to_resizes(&mut self) -> io::Result<()> {
+        self.enabled.store(true, Ordering::SeqCst);
+        Ok(())
+    }
+
+    pub fn dont_listen_to_resizes(&mut self) -> io::Result<()> {
+        self.enabled.store(false, Ordering::SeqCst);
+        Ok(())
+    }
+}
+
+impl_output_mixin! {
+    mixin AsTerminalResizes: TerminalResizes<W> {
+        reset => dont_listen_to_resizes;
+
+        fn terminal_resizes(self) -> io::Result<TerminalResizes<W>> {
+            let signals = Signals::new(&[signal_hook::SIGWINCH])?;
+            thread::spawn(move || {
+                let mut out = std::io::stdout();
+                for _ in &signals {
+                    match write!(out, "\x1b[18t").and_then(|()| out.flush()) {
+                        Err(_) => break,
+                        _ => {},
+                    }
+                }
+            });
+            Ok(TerminalResizes { output: self, enabled: AtomicBool::new(true) })
+        }
     }
 }

@@ -66,7 +66,7 @@ pub enum Event {
     Mouse(MouseAction, MouseButton, MousePosition, Modifiers),
     MouseWheel(MouseWheelDirection, MousePosition, Modifiers),
 
-    TerminalResize(Dimension),
+    TerminalSize(Dimension),
 
     UnknownByteSequence(Vec<u8>),
 }
@@ -177,7 +177,7 @@ fn parse_input_sequence(bytes: &[u8]) -> (Event, usize) {
         _ if code.len() > 2 && code[0] == 56 && code[1] == 59 => {
             let ([height, width, extra], read) = read_params(&code[2..], 116, 116);
             if height != 1000 && width != 1000 && extra == 0 {
-                (Event::TerminalResize(Dimension { width, height }), read + 4)
+                (Event::TerminalSize(Dimension { width, height }), read + 4)
             } else {
                 (Event::UnknownByteSequence(bytes.to_vec()), bytes.len())
             }
