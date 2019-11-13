@@ -1,171 +1,230 @@
 use std::io;
-use std::io::Write;
-use std::os::unix::io::AsRawFd;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::io::{Write, Error};
 use std::thread;
 
 use signal_hook::iterator::Signals;
 use termios::*;
+use std::thread::JoinHandle;
+use std::ops::{Deref, DerefMut};
 
-#[derive(Clone)]
-pub struct Raw<W: Write + AsRawFd> {
-    prev_ios: Termios,
-    output: W,
+macro_rules! terminal_mixin {
+    ($name:ident, drop(&mut $self:ident) { $($code:tt)* }) => {
+        impl<T: Terminal> Terminal for $name<T> {}
+
+        impl<T: Terminal> Deref for $name<T> {
+            type Target = T;
+
+            fn deref(&self) -> &Self::Target {
+                &self.peer
+            }
+        }
+
+        impl<T: Terminal> DerefMut for $name<T> {
+            fn deref_mut(&mut self) -> &mut Self::Target {
+                &mut self.peer
+            }
+        }
+
+        impl<T: Terminal> Drop for $name<T> {
+            fn drop(&mut $self) {
+                $($code)*
+            }
+        }
+    };
 }
 
-impl_output_mixin! {
-    mixin AsRaw: Raw<W + AsRawFd> {
-        reset => normal_mode;
+pub trait Terminal where Self: Sized {
+    fn raw(self) -> io::Result<Raw<Self>> {
+        let raw = Raw { prev_ios: Termios::from_fd(libc::STDOUT_FILENO)?, peer: self };
+        raw.raw_mode()?;
+        Ok(raw)
+    }
 
-        fn raw(self) -> io::Result<Raw<W>> {
-            let mut ios = Termios::from_fd(self.as_raw_fd())?;
-            let prev_ios = ios.clone();
+    fn alt_screen(self) -> io::Result<AltScreen<Self>> {
+        let alt_screen = AltScreen { peer: self };
+        alt_screen.switch_to_alt()?;
+        Ok(alt_screen)
+    }
 
-            cfmakeraw(&mut ios);
-            tcsetattr(self.as_raw_fd(), termios::TCSAFLUSH, &ios)?;
+    fn cursor_control(self) -> io::Result<CursorControl<Self>> {
+        let cursor_control = CursorControl { peer: self };
+        cursor_control.set_cursor_hidden()?;
+        Ok(cursor_control)
+    }
 
-            Ok(Raw { prev_ios, output: self })
-        }
+    fn mouse_input(self) -> io::Result<MouseInput<Self>> {
+        let mouse_input = MouseInput { peer: self };
+        mouse_input.listen_to_mouse()?;
+        Ok(mouse_input)
+    }
+
+    fn terminal_resizes(self) -> io::Result<TerminalResizes<Self>> {
+        let mut resizes = TerminalResizes { handle: None, peer: self };
+        resizes.listen_to_resizes()?;
+        Ok(resizes)
     }
 }
 
-impl<W: Write + AsRawFd> Raw<W> {
+pub struct TerminalBase;
+
+impl Terminal for TerminalBase {}
+
+impl Write for TerminalBase {
+    fn write(&mut self, buf: &[u8]) -> Result<usize, Error> {
+        std::io::stdout().write(buf)
+    }
+
+    fn flush(&mut self) -> Result<(), Error> {
+        std::io::stdout().flush()
+    }
+}
+
+pub struct Raw<T: Terminal> {
+    prev_ios: Termios,
+    peer: T,
+}
+
+impl<T: Terminal> Raw<T> {
     pub fn raw_mode(&self) -> io::Result<()> {
-        let mut ios = Termios::from_fd(self.output.as_raw_fd())?;
+        let mut ios = Termios::from_fd(libc::STDOUT_FILENO)?;
         cfmakeraw(&mut ios);
-        tcsetattr(self.output.as_raw_fd(), termios::TCSAFLUSH, &ios)?;
+        tcsetattr(libc::STDOUT_FILENO, termios::TCSAFLUSH, &ios)?;
         Ok(())
     }
 
     pub fn normal_mode(&self) -> io::Result<()> {
-        tcsetattr(self.output.as_raw_fd(), termios::TCSAFLUSH, &self.prev_ios)
+        tcsetattr(libc::STDOUT_FILENO, termios::TCSAFLUSH, &self.prev_ios)
     }
 }
 
-#[derive(Clone)]
-pub struct AltScreen<W: Write> {
-    output: W
+terminal_mixin!(Raw, drop(&mut self) { self.normal_mode().unwrap() });
+
+pub struct AltScreen<T: Terminal> {
+    peer: T,
 }
 
-impl<W: Write> AltScreen<W> {
-    pub fn switch_to_alt(&mut self) -> io::Result<()> {
-        write!(self, "\x1b[?1049h")
+impl<T: Terminal> AltScreen<T> {
+    pub fn switch_to_alt(&self) -> io::Result<()> {
+        let stdout = std::io::stdout();
+        let mut handle = stdout.lock();
+        handle.write_all(b"\x1b[?1049h")?;
+        handle.flush()
     }
 
-    pub fn switch_to_normal(&mut self) -> io::Result<()> {
-        write!(self, "\x1b[?1049l")
-    }
-}
-
-impl_output_mixin! {
-    mixin AsAltScreen: AltScreen<W> {
-        apply => switch_to_alt;
-        reset => switch_to_normal;
-        fn alt_screen(self) -> io::Result<AltScreen<W>>;
-    }
-}
-
-#[derive(Clone)]
-pub struct CursorControl<W: Write> {
-    output: W
-}
-
-impl<W: Write> CursorControl<W> {
-    pub fn set_cursor_hidden(&mut self) -> io::Result<()> {
-        write!(self, "\x1b[?25l")
-    }
-    pub fn set_cursor_visible(&mut self) -> io::Result<()> {
-        write!(self, "\x1b[?25h")
-    }
-
-    pub fn cursor_push(&mut self) -> io::Result<()> {
-        write!(self, "\x1b[s")
-    }
-
-    pub fn cursor_pop(&mut self) -> io::Result<()> {
-        write!(self, "\x1b[u")
-    }
-
-    pub fn cursor_move(&mut self, x: u16, y: u16) -> io::Result<()> {
-        write!(self, "\x1b[{1};{0}H", x, y)
-    }
-
-    pub fn write_at(&mut self, x: u16, y: u16, s: &str) -> io::Result<()> {
-        self.cursor_push()?;
-        self.cursor_move(x, y)?;
-        write!(self, "{}", s)?;
-        self.cursor_pop()?;
-        self.flush()
+    pub fn switch_to_normal(&self) -> io::Result<()> {
+        let stdout = std::io::stdout();
+        let mut handle = stdout.lock();
+        handle.write_all(b"\x1b[?1049l")?;
+        handle.flush()
     }
 }
 
-impl_output_mixin! {
-    mixin AsCursorControl: CursorControl<W> {
-        reset => set_cursor_visible;
+terminal_mixin!(AltScreen, drop(&mut self) { self.switch_to_normal().unwrap() });
 
-        fn cursor_control(self) -> CursorControl<W>;
+pub struct CursorControl<T: Terminal> {
+    peer: T,
+}
+
+impl<T: Terminal> CursorControl<T> {
+    pub fn set_cursor_hidden(&self) -> io::Result<()> {
+        let stdout = std::io::stdout();
+        let mut handle = stdout.lock();
+        handle.write_all(b"\x1b[?25l")?;
+        handle.flush()
+    }
+
+    pub fn set_cursor_visible(&self) -> io::Result<()> {
+        let stdout = std::io::stdout();
+        let mut handle = stdout.lock();
+        handle.write_all(b"\x1b[?25h")?;
+        handle.flush()
+    }
+
+    pub fn cursor_push(&self) -> io::Result<()> {
+        let stdout = std::io::stdout();
+        let mut handle = stdout.lock();
+        handle.write_all(b"\x1b[s")?;
+        handle.flush()
+    }
+
+    pub fn cursor_pop(&self) -> io::Result<()> {
+        let stdout = std::io::stdout();
+        let mut handle = stdout.lock();
+        handle.write_all(b"\x1b[u")?;
+        handle.flush()
+    }
+
+    pub fn cursor_move(&self, x: u16, y: u16) -> io::Result<()> {
+        let stdout = std::io::stdout();
+        let mut handle = stdout.lock();
+        write!(handle, "\x1b[{1};{0}H", x, y)?;
+        handle.flush()
+    }
+
+    pub fn write_at(&self, x: u16, y: u16, s: &str) -> io::Result<()> {
+        let stdout = std::io::stdout();
+        let mut handle = stdout.lock();
+        write!(handle, "\x1b[s\x1b[{1};{0}H{2}\x1b[u", x, y, s)?;
+        handle.flush()
     }
 }
 
-#[derive(Clone)]
-pub struct MouseInput<W: Write> {
-    output: W
+terminal_mixin!(CursorControl, drop(&mut self) { self.set_cursor_visible().unwrap() });
+
+pub struct MouseInput<T: Terminal> {
+    peer: T,
 }
 
-impl<W: Write> MouseInput<W> {
+impl<T: Terminal> MouseInput<T> {
 
-    pub fn listen_to_mouse(&mut self) -> io::Result<()> {
-        write!(self, "\x1b[?1002h\x1b[?1006h")
+    pub fn listen_to_mouse(&self) -> io::Result<()> {
+        let stdout = std::io::stdout();
+        let mut handle = stdout.lock();
+        handle.write_all(b"\x1b[?1002h\x1b[?1006h")?;
+        handle.flush()
     }
 
-    pub fn dont_listen_to_mouse(&mut self) -> io::Result<()> {
-        write!(self, "\x1b[?1002l\x1b[?1006l")
-    }
-}
-
-impl_output_mixin! {
-    mixin AsMouseInput: MouseInput<W> {
-        apply => listen_to_mouse;
-        reset => dont_listen_to_mouse;
-
-        fn mouse_input(self) -> io::Result<MouseInput<W>>;
+    pub fn dont_listen_to_mouse(&self) -> io::Result<()> {
+        let stdout = std::io::stdout();
+        let mut handle = stdout.lock();
+        handle.write_all(b"\x1b[?1002l\x1b[?1006l")?;
+        handle.flush()
     }
 }
 
-pub struct TerminalResizes<W: Write> {
-    output: W,
-    enabled: AtomicBool
+terminal_mixin!(MouseInput, drop(&mut self) { self.dont_listen_to_mouse().unwrap() });
+
+pub struct TerminalResizes<T: Terminal> {
+    handle: Option<(Signals, JoinHandle<()>)>,
+    peer: T,
 }
 
-impl<W: Write> TerminalResizes<W> {
+impl<T: Terminal> TerminalResizes<T> {
 
     pub fn listen_to_resizes(&mut self) -> io::Result<()> {
-        self.enabled.store(true, Ordering::SeqCst);
-        Ok(())
-    }
+        self.dont_listen_to_resizes(); // noop if not listening, need to call anyway if listening
 
-    pub fn dont_listen_to_resizes(&mut self) -> io::Result<()> {
-        self.enabled.store(false, Ordering::SeqCst);
-        Ok(())
-    }
-}
-
-impl_output_mixin! {
-    mixin AsTerminalResizes: TerminalResizes<W> {
-        reset => dont_listen_to_resizes;
-
-        fn terminal_resizes(self) -> io::Result<TerminalResizes<W>> {
-            let signals = Signals::new(&[signal_hook::SIGWINCH])?;
-            thread::spawn(move || {
-                let mut out = std::io::stdout();
-                for _ in &signals {
-                    match write!(out, "\x1b[18t").and_then(|()| out.flush()) {
-                        Err(_) => break,
-                        _ => {},
-                    }
+        let signals = Signals::new(&[signal_hook::SIGWINCH])?;
+        let signals_bg = signals.clone();
+        let join_handle = thread::spawn(move || {
+            let mut out = std::io::stdout();
+            for _ in &signals_bg {
+                match write!(out, "\x1b[18t").and_then(|()| out.flush()) {
+                    Err(_) => break,
+                    _ => {},
                 }
-            });
-            Ok(TerminalResizes { output: self, enabled: AtomicBool::new(true) })
+            }
+        });
+        self.handle = Some((signals, join_handle));
+        Ok(())
+    }
+
+    pub fn dont_listen_to_resizes(&mut self) {
+        if let Some((signals, join_handle)) = self.handle.take() {
+            signals.close();
+            join_handle.join().expect("couldn't join on the listening thread");
         }
     }
 }
+
+terminal_mixin!(TerminalResizes, drop(&mut self) { self.dont_listen_to_resizes() });

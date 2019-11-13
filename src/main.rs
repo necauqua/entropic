@@ -1,36 +1,23 @@
 use std::error::Error;
-use std::io::{Write, stdout, stdin};
+use std::io::Write;
 
-use entropic::term::*;
-use entropic::input::{Events, Event, Modifiers, MouseButton};
-use std::thread;
-use signal_hook::iterator::Signals;
+use entropic::{
+    term::*,
+    input::*
+};
+use entropic::state::Dimension;
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let mut input = Events::new(stdin());
+    let mut input = Events::new(std::io::stdin());
 
-    let mut stdout = stdout()
+    let mut stdout = TerminalBase
         .raw()?
         .alt_screen()?
         .mouse_input()?
-        .cursor_control();
+        .cursor_control()?
+        .terminal_resizes()?;
 
-    stdout.set_cursor_hidden()?;
-    stdout.flush()?;
-
-    let mut x = 1u16;
-    let mut y = 1u16;
-
-    let signals = Signals::new(&[signal_hook::SIGWINCH])?;
-    thread::spawn(move || {
-        let mut out = std::io::stdout();
-        for _ in &signals {
-            match write!(out, "\x1b[18t").and_then(|()| out.flush()) {
-                Err(_) => break,
-                _ => {},
-            }
-        }
-    });
+    let mut cursor = Cursor { x: 1, y: 1 };
 
     loop {
         match input.next() {
@@ -43,24 +30,24 @@ fn main() -> Result<(), Box<dyn Error>> {
                         stdout.flush()?;
                     }
                     Event::ArrowUp => {
-                        stdout.write_at((x - 1) / 2 * 2 + 1, y, "  ")?;
-                        y -= 1;
-                        stdout.write_at((x - 1) / 2 * 2 + 1, y, "╺╸")?;
+                        stdout.write_at((cursor.x - 1) / 2 * 2 + 1, cursor.y, "  ")?;
+                        cursor.y -= 1;
+                        stdout.write_at((cursor.x - 1) / 2 * 2 + 1, cursor.y, "╺╸")?;
                     }
                     Event::ArrowDown => {
-                        stdout.write_at((x - 1) / 2 * 2 + 1, y, "  ")?;
-                        y += 1;
-                        stdout.write_at((x - 1) / 2 * 2 + 1, y, "╺╸")?;
+                        stdout.write_at((cursor.x - 1) / 2 * 2 + 1, cursor.y, "  ")?;
+                        cursor.y += 1;
+                        stdout.write_at((cursor.x - 1) / 2 * 2 + 1, cursor.y, "╺╸")?;
                     }
                     Event::ArrowRight => {
-                        stdout.write_at((x - 1) / 2 * 2 + 1, y, "  ")?;
-                        x += 2;
-                        stdout.write_at((x - 1) / 2 * 2 + 1, y, "╺╸")?;
+                        stdout.write_at((cursor.x - 1) / 2 * 2 + 1, cursor.y, "  ")?;
+                        cursor.x += 2;
+                        stdout.write_at((cursor.x - 1) / 2 * 2 + 1, cursor.y, "╺╸")?;
                     }
                     Event::ArrowLeft => {
-                        stdout.write_at((x - 1) / 2 * 2 + 1, y, "  ")?;
-                        x -= 2;
-                        stdout.write_at((x - 1) / 2 * 2 + 1, y, "╺╸")?;
+                        stdout.write_at((cursor.x - 1) / 2 * 2 + 1, cursor.y, "  ")?;
+                        cursor.x -= 2;
+                        stdout.write_at((cursor.x - 1) / 2 * 2 + 1, cursor.y, "╺╸")?;
                     }
                     Event::Mouse(_, button, pos, _) => {
                         match button {
@@ -76,8 +63,22 @@ fn main() -> Result<(), Box<dyn Error>> {
                             _ => {}
                         }
                     }
+                    Event::TerminalSize(Dimension { width, height }) => {
+                        write!(stdout, "\x1b[2J\x1b[1;1H")?;
+                        write!(stdout, "┏{}┓", "━".repeat((width - 2) as usize))?;
+                        for i in 0..height - 2 {
+                            write!(stdout, "\x1b[{};1H", i+2)?;
+                            write!(stdout, "┃{}┃", " ".repeat((width - 2) as usize))?;
+                            write!(stdout, "┃{}┃", " ".repeat((width - 2) as usize))?;
+                        }
+                        write!(stdout, "\x1b[{};1H", height)?;
+                        write!(stdout, "┗{}┛", "━".repeat((width - 2) as usize))?;
+                        stdout.cursor_move(2, 2)?;
+                        write!(stdout, "w: {}, h: {}", width, height)?;
+                        stdout.flush()?;
+                    }
                     _event => {
-                        write!(stdout, "{:?}\n\x1b[999D", _event);
+                        write!(stdout, "{:?}\n\x1b[999D", _event)?;
                         stdout.flush()?;
                     }
                 }

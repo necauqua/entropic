@@ -29,7 +29,7 @@ pub enum Modifiers {
 }
 
 #[derive(Debug)]
-pub struct MousePosition {
+pub struct Cursor {
     pub x: u16,
     pub y: u16,
 }
@@ -63,8 +63,8 @@ pub enum Event {
 
     Press(char, Modifiers),
 
-    Mouse(MouseAction, MouseButton, MousePosition, Modifiers),
-    MouseWheel(MouseWheelDirection, MousePosition, Modifiers),
+    Mouse(MouseAction, MouseButton, Cursor, Modifiers),
+    MouseWheel(MouseWheelDirection, Cursor, Modifiers),
 
     TerminalSize(Dimension),
 
@@ -186,7 +186,7 @@ fn parse_input_sequence(bytes: &[u8]) -> (Event, usize) {
         _ if code.len() > 1 && code[0] == 60 => {
             let ([b, x, y], read) = read_params(&code[1..], 109, 77);
             if b != 1000 && x != 1000 && y != 1000 {
-                let pos = MousePosition { x, y };
+                let pos = Cursor { x, y };
                 let mods = match (b & 0b11000) >> 3 {
                     0 => Modifiers::None,
                     1 => Modifiers::Alt,
