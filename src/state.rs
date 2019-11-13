@@ -2,6 +2,7 @@
 
 use std::fmt::{Debug, Formatter, Error};
 
+#[derive(Copy, Clone)]
 pub struct Pixel {
     pub r: u8,
     pub g: u8,
@@ -13,7 +14,7 @@ pub struct Layer {
     pixels: Box<[Pixel]>,
 }
 
-#[derive(Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct Dimension {
     pub width: u16,
     pub height: u16

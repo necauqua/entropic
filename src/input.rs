@@ -10,16 +10,15 @@ pub enum MouseButton {
     Left,
     Middle,
     Right,
-    Extra(u8),
 }
 
-#[derive(Debug)]
+#[derive(Copy, Clone, Debug)]
 pub enum MouseWheelDirection {
     Up,
     Down,
 }
 
-#[derive(Debug)]
+#[derive(Copy, Clone, Debug)]
 pub enum Modifiers {
     // made as an enum for simpler matching
     None,
@@ -28,13 +27,13 @@ pub enum Modifiers {
     CtrlAlt,
 }
 
-#[derive(Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct Cursor {
     pub x: u16,
     pub y: u16,
 }
 
-#[derive(Debug)]
+#[derive(Copy, Clone, Debug)]
 pub enum MouseAction {
     Press,
     Release,
@@ -64,6 +63,7 @@ pub enum Event {
     Press(char, Modifiers),
 
     Mouse(MouseAction, MouseButton, Cursor, Modifiers),
+    MouseMotion(Cursor, Modifiers),
     MouseWheel(MouseWheelDirection, Cursor, Modifiers),
 
     TerminalSize(Dimension),
@@ -198,19 +198,19 @@ fn parse_input_sequence(bytes: &[u8]) -> (Event, usize) {
                     let dir = if b & 0b1 == 0 { MouseWheelDirection::Up } else { MouseWheelDirection::Down };
                     return (Event::MouseWheel(dir, pos, mods), read + 3);
                 }
-                let button = match b & 0b11 {
-                    0 => MouseButton::Left,
-                    1 => MouseButton::Middle,
-                    2 => MouseButton::Right,
-                    3 => MouseButton::Extra(3), // idk actually
-                    _ => unreachable!(),
-                };
                 let action = if code[read] == 109 {
                     MouseAction::Release
                 } else if b & 0b100000 != 0 { // drag bit
                     MouseAction::Drag
                 } else {
                     MouseAction::Press
+                };
+                let button = match b & 0b11 {
+                    0b00 => MouseButton::Left,
+                    0b01 => MouseButton::Middle,
+                    0b10 => MouseButton::Right,
+                    0b11 => return (Event::MouseMotion(pos, mods), read + 3),
+                    _ => unreachable!(),
                 };
                 return (Event::Mouse(action, button, pos, mods), read + 3);
             }
@@ -239,11 +239,12 @@ fn spawn_reader<R: Read + Send + 'static>(mut input: R, tx: Sender<io::Result<Ev
                     match bytes_read {
                         0 => break, // 0 bytes read means EOF
                         _ => {
-                            let bytes_read = bytes_read + offset;
-                            let (event, read) = parse_input_sequence(&buf[0..bytes_read]);
-                            if read < bytes_read {
-                                offset = bytes_read - read;
-                                buf.copy_within(read..bytes_read, 0);
+                            let size = bytes_read + offset;
+                            let (event, read) = parse_input_sequence(&buf[0..size]);
+                            if read < size {
+                                // store the unconsumed part as part of the next buffer
+                                offset = size - read;
+                                buf.copy_within(read..size, 0);
                             } else {
                                 offset = 0;
                             }

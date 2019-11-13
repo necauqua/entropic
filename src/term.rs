@@ -180,14 +180,14 @@ impl<T: Terminal> MouseInput<T> {
     pub fn listen_to_mouse(&self) -> io::Result<()> {
         let stdout = std::io::stdout();
         let mut handle = stdout.lock();
-        handle.write_all(b"\x1b[?1002h\x1b[?1006h")?;
+        handle.write_all(b"\x1b[?1003h\x1b[?1006h")?;
         handle.flush()
     }
 
     pub fn dont_listen_to_mouse(&self) -> io::Result<()> {
         let stdout = std::io::stdout();
         let mut handle = stdout.lock();
-        handle.write_all(b"\x1b[?1002l\x1b[?1006l")?;
+        handle.write_all(b"\x1b[?1003l\x1b[?1006l")?;
         handle.flush()
     }
 }
@@ -199,7 +199,18 @@ pub struct TerminalResizes<T: Terminal> {
     peer: T,
 }
 
+pub fn send_size() -> io::Result<()> {
+    let stdout = std::io::stdout();
+    let mut handle = stdout.lock();
+    write!(handle, "\x1b[18t")?;
+    handle.flush()
+}
+
 impl<T: Terminal> TerminalResizes<T> {
+
+    pub fn send_size(&self) -> io::Result<()> {
+        send_size()
+    }
 
     pub fn listen_to_resizes(&mut self) -> io::Result<()> {
         self.dont_listen_to_resizes(); // noop if not listening, need to call anyway if listening
@@ -207,9 +218,8 @@ impl<T: Terminal> TerminalResizes<T> {
         let signals = Signals::new(&[signal_hook::SIGWINCH])?;
         let signals_bg = signals.clone();
         let join_handle = thread::spawn(move || {
-            let mut out = std::io::stdout();
             for _ in &signals_bg {
-                match write!(out, "\x1b[18t").and_then(|()| out.flush()) {
+                match send_size() {
                     Err(_) => break,
                     _ => {},
                 }
