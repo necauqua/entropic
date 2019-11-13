@@ -70,24 +70,15 @@ fn main() -> Result<(), Box<dyn Error>> {
                         write!(term, "\x1b[2J\x1b[1;1H")?;
                         term.flush()?;
                     }
-                    Event::ArrowUp => {
-                        term.write_at((cursor.x - 1) / 2 * 2 + 1, cursor.y, "  ")?;
-                        cursor.y -= 1;
-                        term.write_at((cursor.x - 1) / 2 * 2 + 1, cursor.y, "╺╸")?;
-                    }
-                    Event::ArrowDown => {
-                        term.write_at((cursor.x - 1) / 2 * 2 + 1, cursor.y, "  ")?;
-                        cursor.y += 1;
-                        term.write_at((cursor.x - 1) / 2 * 2 + 1, cursor.y, "╺╸")?;
-                    }
-                    Event::ArrowRight => {
-                        term.write_at((cursor.x - 1) / 2 * 2 + 1, cursor.y, "  ")?;
-                        cursor.x += 2;
-                        term.write_at((cursor.x - 1) / 2 * 2 + 1, cursor.y, "╺╸")?;
-                    }
-                    Event::ArrowLeft => {
-                        term.write_at((cursor.x - 1) / 2 * 2 + 1, cursor.y, "  ")?;
-                        cursor.x -= 2;
+                    Event::Arrow(arrow, Modifiers::None) => {
+                        let old_cursor = cursor;
+                        match arrow {
+                            Arrow::Up => cursor.y -= 1,
+                            Arrow::Down => cursor.y += 1,
+                            Arrow::Right => cursor.x += 1,
+                            Arrow::Left => cursor.x -= 1,
+                        }
+                        term.write_at((old_cursor.x - 1) / 2 * 2 + 1, old_cursor.y, "  ")?;
                         term.write_at((cursor.x - 1) / 2 * 2 + 1, cursor.y, "╺╸")?;
                     }
                     Event::Mouse(_, _, pos, _) => {

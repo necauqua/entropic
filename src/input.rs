@@ -22,9 +22,13 @@ pub enum MouseWheelDirection {
 pub enum Modifiers {
     // made as an enum for simpler matching
     None,
-    Alt,
     Ctrl,
+    Alt,
+    Shift,
     CtrlAlt,
+    CtrlShift,
+    ShiftAlt,
+    CtrlShiftAlt,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -38,6 +42,14 @@ pub enum MouseAction {
     Press,
     Release,
     Drag,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub enum Arrow {
+    Up,
+    Down,
+    Right,
+    Left,
 }
 
 #[derive(Debug)]
@@ -55,10 +67,7 @@ pub enum Event {
     PgUp,
     PgDown,
 
-    ArrowUp,
-    ArrowDown,
-    ArrowRight,
-    ArrowLeft,
+    Arrow(Arrow, Modifiers),
 
     Press(char, Modifiers),
 
@@ -127,6 +136,35 @@ fn read_params(bytes: &[u8], until: u8, until2: u8) -> ([u16; 3], usize) {
     ([1000; 3], read)
 }
 
+fn parse_arrow(byte: u8) -> Option<Arrow> {
+    match byte {
+        65 => Some(Arrow::Up),
+        66 => Some(Arrow::Down),
+        67 => Some(Arrow::Right),
+        68 => Some(Arrow::Left),
+        _ => None,
+    }
+}
+
+fn parse_mods(byte: u8) -> Option<Modifiers> {
+    match byte {
+        50 => Some(Modifiers::Shift),
+        51 => Some(Modifiers::Alt),
+        52 => Some(Modifiers::ShiftAlt),
+        53 => Some(Modifiers::Ctrl),
+        54 => Some(Modifiers::CtrlShift),
+        55 => Some(Modifiers::CtrlAlt),
+        56 => Some(Modifiers::CtrlShiftAlt),
+        _ => None,
+    }
+}
+
+macro_rules! fail {
+    ($bytes:ident) => {
+        return (Event::UnknownByteSequence($bytes.to_vec()), $bytes.len())
+    };
+}
+
 /// This method tries to parse a sequence of bytes into an event.
 /// It returns an event, and a number of consumed bytes.
 /// If it fails to parse the event, it returns `Event::UnknownByteSequence`
@@ -139,31 +177,40 @@ fn parse_input_sequence(bytes: &[u8]) -> (Event, usize) {
             32 => Event::Space,
             127 => Event::Backspace,
             b if b < 32 => Event::Press(char::from(b + 96), Modifiers::Ctrl),
-            b => Event::Press(char::from(b), Modifiers::None),
-        }, 1)
+            b => {
+                let ch = char::from(b);
+                if ch.is_ascii_uppercase() {
+                    Event::Press(ch.to_ascii_lowercase(), Modifiers::Shift)
+                } else {
+                    Event::Press(ch, Modifiers::None)
+                }
+            }
+        }, 1);
     }
     // all next patterns start with ESC, just handle it at the beginning
     if bytes[0] != 27 {
-        return (Event::UnknownByteSequence(bytes.to_vec()), bytes.len());
+        fail!(bytes);
     }
     if bytes.len() == 2 {
         let b = bytes[1];
         return (if b < 32 {
             Event::Press(char::from(b + 96), Modifiers::CtrlAlt)
         } else {
-            Event::Press(char::from(b), Modifiers::Alt)
+            let ch = char::from(b);
+            if ch.is_ascii_uppercase() {
+                Event::Press(ch.to_ascii_lowercase(), Modifiers::ShiftAlt)
+            } else {
+                Event::Press(ch, Modifiers::Alt)
+            }
         }, 2);
     }
     // all other ones start with CSI (ESC+[)
     if bytes[1] != 91 {
-        return (Event::UnknownByteSequence(bytes.to_vec()), bytes.len());
+        fail!(bytes);
     }
     let code = &bytes[2..];
     match code {
-        [65] => (Event::ArrowUp, 3),
-        [66] => (Event::ArrowDown, 3),
-        [67] => (Event::ArrowRight, 3),
-        [68] => (Event::ArrowLeft, 3),
+        [b @ 65..=68] => (Event::Arrow(parse_arrow(*b).unwrap(), Modifiers::None), 3),
 
         [70] => (Event::End, 3),
         [72] => (Event::Home, 3),
@@ -173,50 +220,56 @@ fn parse_input_sequence(bytes: &[u8]) -> (Event, usize) {
         [53, 126] => (Event::PgUp, 4),
         [54, 126] => (Event::PgDown, 4),
 
+        [49, 59, mods @ 50..=56, arrow] => {
+            match parse_arrow(*arrow) {
+                Some(arrow) => (Event::Arrow(arrow, parse_mods(*mods).unwrap()), 6),
+                _ => fail!(bytes)
+            }
+        }
+
         // CSI '8' ';' height ';' width 't'
         _ if code.len() > 2 && code[0] == 56 && code[1] == 59 => {
             let ([height, width, extra], read) = read_params(&code[2..], 116, 116);
-            if height != 1000 && width != 1000 && extra == 0 {
-                (Event::TerminalSize(Dimension { width, height }), read + 4)
-            } else {
-                (Event::UnknownByteSequence(bytes.to_vec()), bytes.len())
+            if height == 1000 || width == 1000 || extra != 0 {
+                fail!(bytes);
             }
+            (Event::TerminalSize(Dimension { width, height }), read + 4)
         }
 
         _ if code.len() > 1 && code[0] == 60 => {
             let ([b, x, y], read) = read_params(&code[1..], 109, 77);
-            if b != 1000 && x != 1000 && y != 1000 {
-                let pos = Cursor { x, y };
-                let mods = match (b & 0b11000) >> 3 {
-                    0 => Modifiers::None,
-                    1 => Modifiers::Alt,
-                    2 => Modifiers::Ctrl,
-                    3 => Modifiers::CtrlAlt,
-                    _ => unreachable!(),
-                };
-                if b & 0b1000000 != 0 { // wheel bit
-                    let dir = if b & 0b1 == 0 { MouseWheelDirection::Up } else { MouseWheelDirection::Down };
-                    return (Event::MouseWheel(dir, pos, mods), read + 3);
-                }
-                let action = if code[read] == 109 {
-                    MouseAction::Release
-                } else if b & 0b100000 != 0 { // drag bit
-                    MouseAction::Drag
-                } else {
-                    MouseAction::Press
-                };
-                let button = match b & 0b11 {
-                    0b00 => MouseButton::Left,
-                    0b01 => MouseButton::Middle,
-                    0b10 => MouseButton::Right,
-                    0b11 => return (Event::MouseMotion(pos, mods), read + 3),
-                    _ => unreachable!(),
-                };
-                return (Event::Mouse(action, button, pos, mods), read + 3);
+            if b == 1000 || x == 1000 || y == 1000 {
+                fail!(bytes);
             }
-            (Event::UnknownByteSequence(bytes.to_vec()), bytes.len())
+            let pos = Cursor { x, y };
+            let mods = match (b & 0b11000) >> 3 {
+                0 => Modifiers::None,
+                1 => Modifiers::Alt,
+                2 => Modifiers::Ctrl,
+                3 => Modifiers::CtrlAlt,
+                _ => unreachable!(),
+            };
+            if b & 0b1000000 != 0 { // wheel bit
+                let dir = if b & 0b1 == 0 { MouseWheelDirection::Up } else { MouseWheelDirection::Down };
+                return (Event::MouseWheel(dir, pos, mods), read + 3);
+            }
+            let action = if code[read] == 109 {
+                MouseAction::Release
+            } else if b & 0b100000 != 0 { // drag bit
+                MouseAction::Drag
+            } else {
+                MouseAction::Press
+            };
+            let button = match b & 0b11 {
+                0b00 => MouseButton::Left,
+                0b01 => MouseButton::Middle,
+                0b10 => MouseButton::Right,
+                0b11 => return (Event::MouseMotion(pos, mods), read + 3),
+                _ => unreachable!(),
+            };
+            return (Event::Mouse(action, button, pos, mods), read + 3);
         }
-        _ => (Event::UnknownByteSequence(bytes.to_vec()), bytes.len())
+        _ => fail!(bytes)
     }
 }
 
