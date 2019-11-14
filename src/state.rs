@@ -20,6 +20,27 @@ pub struct Dimension {
     pub height: u16
 }
 
+impl Dimension {
+
+    pub fn number(&self) -> u32 {
+        self.width as u32 * self.height as u32
+    }
+
+    pub fn min(self, other: Dimension) -> Dimension {
+        Dimension {
+            width: self.width.min(other.width),
+            height: self.height.min(other.height),
+        }
+    }
+
+    pub fn max(self, other: Dimension) -> Dimension {
+        Dimension {
+            width: self.width.max(other.width),
+            height: self.height.max(other.height),
+        }
+    }
+}
+
 pub struct Picture {
     dimension: Dimension,
     layers: Vec<Layer>,

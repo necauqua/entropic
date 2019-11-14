@@ -241,6 +241,7 @@ fn parse_input_sequence(bytes: &[u8]) -> (Event, usize) {
             if b == 1000 || x == 1000 || y == 1000 {
                 fail!(bytes);
             }
+//            println!("{:0>8b}", b);
             let pos = Cursor { x, y };
             let mods = match (b & 0b11000) >> 3 {
                 0 => Modifiers::None,
