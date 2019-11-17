@@ -3,7 +3,7 @@ use std::io::{ErrorKind, Read};
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
 
-use crate::state::Dimension;
+use crate::state::{Dimension, Position};
 
 #[derive(Debug)]
 pub enum MouseButton {
@@ -29,12 +29,6 @@ pub enum Modifiers {
     CtrlShift,
     ShiftAlt,
     CtrlShiftAlt,
-}
-
-#[derive(Copy, Clone, Debug)]
-pub struct Cursor {
-    pub x: u16,
-    pub y: u16,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -71,9 +65,9 @@ pub enum Event {
 
     Press(char, Modifiers),
 
-    Mouse(MouseAction, MouseButton, Cursor, Modifiers),
-    MouseMotion(Cursor, Modifiers),
-    MouseWheel(MouseWheelDirection, Cursor, Modifiers),
+    Mouse(MouseAction, MouseButton, Position, Modifiers),
+    MouseMotion(Position, Modifiers),
+    MouseWheel(MouseWheelDirection, Position, Modifiers),
 
     TerminalSize(Dimension),
 
@@ -242,7 +236,7 @@ fn parse_input_sequence(bytes: &[u8]) -> (Event, usize) {
                 fail!(bytes);
             }
 //            println!("{:0>8b}", b);
-            let pos = Cursor { x, y };
+            let pos = Position { x, y };
             let mods = match (b & 0b11000) >> 3 {
                 0 => Modifiers::None,
                 1 => Modifiers::Alt,

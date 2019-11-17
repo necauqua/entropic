@@ -1,54 +1,71 @@
 use std::io::{Write, StdoutLock};
 use std::io;
-use crate::state::Dimension;
+use crate::state::{Dimension, Position, Pixel};
+
+pub trait Drawable {
+
+    fn draw(&self, handle: &mut StdoutLock) -> io::Result<()>;
+}
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct TerminalRgb {
+pub struct Color {
     pub r: u8,
     pub g: u8,
     pub b: u8,
 }
 
-impl TerminalRgb {
-    pub fn new(r: u8, g: u8, b: u8) -> TerminalRgb {
-        TerminalRgb { r, g, b }
+impl Color {
+    pub fn new(r: u8, g: u8, b: u8) -> Color {
+        Color { r, g, b }
     }
 
-    pub fn gray(gray: u8) -> TerminalRgb {
-        TerminalRgb { r: gray, g: gray, b: gray }
+    pub fn gray(gray: u8) -> Color {
+        Color { r: gray, g: gray, b: gray }
     }
 }
 
 #[derive(Default, Debug, Clone, PartialEq)]
 pub struct CellColor {
-    pub bg: Option<TerminalRgb>,
-    pub fg: Option<TerminalRgb>,
+    pub bg: Option<Color>,
+    pub fg: Option<Color>,
 }
 
 impl CellColor {
-    #[inline]
     pub fn none() -> CellColor {
-        Default::default()
+        Self::default()
     }
 
-    pub fn bg(mut self, rgb: TerminalRgb) -> CellColor {
+    pub fn bg(mut self, rgb: Color) -> CellColor {
         self.bg = Some(rgb);
         self
     }
 
-    pub fn fg(mut self, rgb: TerminalRgb) -> CellColor {
+    pub fn fg(mut self, rgb: Color) -> CellColor {
         self.fg = Some(rgb);
         self
     }
 
-    pub fn draw(&self, handle: &mut StdoutLock) -> io::Result<()> {
-        if let Some(TerminalRgb { r, g, b }) = self.bg {
+    pub fn clear(&mut self) {
+        self.bg = None;
+        self.fg = None;
+    }
+}
+
+impl Drawable for CellColor {
+    fn draw(&self, handle: &mut StdoutLock) -> io::Result<()> {
+        if let Some(Color { r, g, b }) = self.bg {
             write!(handle, "\x1b[48;2;{};{};{}m", r, g, b)?;
         }
-        if let Some(TerminalRgb { r, g, b }) = self.fg {
+        if let Some(Color { r, g, b }) = self.fg {
             write!(handle, "\x1b[38;2;{};{};{}m", r, g, b)?;
         }
         Ok(())
+    }
+}
+
+impl From<Pixel> for Color {
+    fn from(pixel: Pixel) -> Self {
+        Color { r: pixel.r, g: pixel.g, b: pixel.b }
     }
 }
 
@@ -60,13 +77,13 @@ pub struct TerminalCell {
 
 impl Default for TerminalCell {
     fn default() -> Self {
-        TerminalCell::new(' ')
+        Self::new(' ')
     }
 }
 
 impl TerminalCell {
     pub fn new(char: char) -> TerminalCell {
-        TerminalCell { color: Default::default(), char }
+        TerminalCell { color: CellColor::default(), char }
     }
 
     pub fn color(mut self, color: CellColor) -> TerminalCell {
@@ -74,45 +91,58 @@ impl TerminalCell {
         self
     }
 
-    pub fn bg(mut self, rgb: TerminalRgb) -> TerminalCell {
+    pub fn bg(mut self, rgb: Color) -> TerminalCell {
         self.color = self.color.bg(rgb);
         self
     }
 
-    pub fn fg(mut self, rgb: TerminalRgb) -> TerminalCell {
+    pub fn fg(mut self, rgb: Color) -> TerminalCell {
         self.color = self.color.fg(rgb);
         self
     }
 
-    pub fn draw(&self, handle: &mut StdoutLock) -> io::Result<()> {
+    pub fn clear(&mut self) {
+        self.char = ' ';
+        self.color.clear();
+    }
+}
+
+impl Drawable for TerminalCell {
+    fn draw(&self, handle: &mut StdoutLock) -> io::Result<()> {
         self.color.draw(handle)?;
         write!(handle, "{}\x1b[0m", self.char)
     }
 }
 
 #[derive(Clone)]
-struct TerminalBuffer {
-    max_size: Dimension,
+struct DisplayBuffer {
+    size: Dimension,
     cells: Box<[TerminalCell]>,
 }
 
-impl TerminalBuffer {
-    #[inline]
-    fn offset(&self, x: u16, y: u16) -> usize {
-        y as usize * self.max_size.width as usize + x as usize
+impl DisplayBuffer {
+    fn new(size: Dimension) -> DisplayBuffer {
+        let cells = vec![Default::default(); size.number()].into_boxed_slice();
+        DisplayBuffer { size, cells }
+    }
+
+    fn clear(&mut self, rect: Dimension) {
+        for pos in rect {
+            self.cells[self.size.offset(pos)].clear();
+        }
     }
 
     fn fully_draw(&self, part: Dimension) -> io::Result<()> {
         let stdout = std::io::stdout();
         let mut handle = stdout.lock();
 
-        let Dimension { width, height } = part.min(self.max_size);
+        let Dimension { width, height } = part.min(self.size);
 
         for y in 0..height {
             write!(handle, "\x1b[{};1H", y + 1)?;
             for x in 0..width {
-                self.cells[self.offset(x, y)].draw(&mut handle)?;
-            };
+                self.cells[self.size.offset(Position { x, y })].draw(&mut handle)?;
+            }
         }
         write!(handle, "\x1b[0m")?;
         handle.flush()
@@ -120,28 +150,30 @@ impl TerminalBuffer {
 }
 
 pub struct TerminalState {
-    drawn: Option<TerminalBuffer>,
-    buffer: TerminalBuffer,
+    drawn: Option<DisplayBuffer>,
+    buffer: DisplayBuffer,
 }
 
 impl TerminalState {
     pub fn new(max_size: Dimension) -> TerminalState {
-        let cells = vec![Default::default(); max_size.number() as usize].into_boxed_slice();
-        let buffer = TerminalBuffer { max_size, cells };
-        TerminalState { drawn: None, buffer }
+        TerminalState { drawn: None, buffer: DisplayBuffer::new(max_size) }
     }
 
     #[inline]
-    fn offset(&self, x: u16, y: u16) -> usize {
-        self.buffer.offset(x, y)
+    fn offset(&self, pos: Position) -> usize {
+        self.buffer.size.offset(pos)
     }
 
-    pub fn put(&mut self, x: u16, y: u16, cell: TerminalCell) {
-        self.buffer.cells[self.offset(x, y)] = cell.clone();
+    pub fn clear(&mut self, rect: Dimension) {
+        self.buffer.clear(rect);
     }
 
-    pub fn put_text(&mut self, x: u16, y: u16, color: CellColor, text: impl AsRef<str>) {
-        let pos = self.offset(x, y);
+    pub fn put(&mut self, pos: Position, cell: TerminalCell) {
+        self.buffer.cells[self.offset(pos)] = cell.clone();
+    }
+
+    pub fn put_text(&mut self, pos: Position, color: CellColor, text: impl AsRef<str>) {
+        let pos = self.offset(pos);
         let mut offset = 0;
         for ch in text.as_ref().chars() {
             let cell = TerminalCell::new(ch).color(color.clone());
@@ -162,21 +194,18 @@ impl TerminalState {
             Some(drawn) => {
                 let stdout = std::io::stdout();
                 let mut handle = stdout.lock();
-                let Dimension { width, height } = part.min(self.buffer.max_size);
 
-                for y in 0..height {
-                    for x in 0..width {
-                        let offset = drawn.offset(x, y);
+                for pos in part.min(self.buffer.size) {
+                    let offset = drawn.size.offset(pos);
 
-                        let old = &mut drawn.cells[offset];
-                        let new = &self.buffer.cells[offset];
+                    let old = &mut drawn.cells[offset];
+                    let new = &self.buffer.cells[offset];
 
-                        if old != new {
-                            write!(handle, "\x1b[{};{}H", y + 1, x + 1)?;
-                            new.draw(&mut handle)?;
-                            *old = new.clone();
-                        }
-                    };
+                    if old != new {
+                        pos.draw(&mut handle)?;
+                        new.draw(&mut handle)?;
+                        *old = new.clone();
+                    }
                 }
                 handle.flush()
             }
