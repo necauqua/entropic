@@ -63,6 +63,12 @@ pub trait Terminal where Self: Sized {
         resizes.listen_to_resizes()?;
         Ok(resizes)
     }
+
+    fn no_wrap(self) -> io::Result<NoWrap<Self>> {
+        let no_wrap = NoWrap { peer: self };
+        no_wrap.no_wrap_mode()?;
+        Ok(no_wrap)
+    }
 }
 
 pub struct TerminalBase;
@@ -176,7 +182,6 @@ pub struct MouseInput<T: Terminal> {
 }
 
 impl<T: Terminal> MouseInput<T> {
-
     pub fn listen_to_mouse(&self) -> io::Result<()> {
         let stdout = std::io::stdout();
         let mut handle = stdout.lock();
@@ -207,7 +212,6 @@ pub fn send_size() -> io::Result<()> {
 }
 
 impl<T: Terminal> TerminalResizes<T> {
-
     pub fn send_size(&self) -> io::Result<()> {
         send_size()
     }
@@ -217,14 +221,15 @@ impl<T: Terminal> TerminalResizes<T> {
 
         let signals = Signals::new(&[signal_hook::SIGWINCH])?;
         let signals_bg = signals.clone();
-        let join_handle = thread::spawn(move || {
-            for _ in &signals_bg {
-                match send_size() {
-                    Err(_) => break,
-                    _ => {},
+        let join_handle = thread::spawn(move ||
+            while !signals_bg.is_closed() {
+                if signals_bg.wait().count() > 0 {
+                    match send_size() {
+                        Err(_) => break,
+                        _ => {}
+                    }
                 }
-            }
-        });
+            });
         self.handle = Some((signals, join_handle));
         Ok(())
     }
@@ -238,3 +243,26 @@ impl<T: Terminal> TerminalResizes<T> {
 }
 
 terminal_mixin!(TerminalResizes, drop(&mut self) { self.dont_listen_to_resizes() });
+
+
+pub struct NoWrap<T: Terminal> {
+    peer: T,
+}
+
+impl<T: Terminal> NoWrap<T> {
+    pub fn no_wrap_mode(&self) -> io::Result<()> {
+        let stdout = std::io::stdout();
+        let mut handle = stdout.lock();
+        handle.write_all(b"\x1b[?7l")?;
+        handle.flush()
+    }
+
+    pub fn wrap_mode(&self) -> io::Result<()> {
+        let stdout = std::io::stdout();
+        let mut handle = stdout.lock();
+        handle.write_all(b"\x1b[?7h")?;
+        handle.flush()
+    }
+}
+
+terminal_mixin!(NoWrap, drop(&mut self) { self.wrap_mode().unwrap() });

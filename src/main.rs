@@ -70,6 +70,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .mouse_input()?
         .cursor_control()?
         .terminal_resizes()?
+        .no_wrap()?
         .alt_screen()?; // so that the switch back to primary buffer happens last
 
     let mut gui = GuiState {
@@ -106,7 +107,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 //                        term.write_at((cursor.x - 1) / 2 * 2 + 1, cursor.y, "╺╸")?;
 //                    }
                     Event::Press('r', Modifiers::Ctrl) => {
-                        gui.buffer.redraw(gui.terminal)?;
+                        gui.redraw()?;
                     }
                     Event::Mouse(_, MouseButton::Left, pos, _) => {
                         gui.mouse = pos;
@@ -128,8 +129,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                     }
                     Event::TerminalSize(terminal_size) => {
                         gui.terminal = terminal_size;
-                        gui.redraw()?;
                         gui.draw()?;
+                        gui.redraw()?;
                     }
                     _event => {
                         write!(term, "{:?}\n\x1b[999D", _event)?;

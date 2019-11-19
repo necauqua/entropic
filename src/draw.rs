@@ -138,13 +138,15 @@ impl DisplayBuffer {
 
         let Dimension { width, height } = part.min(self.size);
 
+        write!(handle, "\x1b[3J")?;
+
         for y in 0..height {
             write!(handle, "\x1b[{};1H", y + 1)?;
             for x in 0..width {
                 self.cells[self.size.offset(Position { x, y })].draw(&mut handle)?;
             }
         }
-        write!(handle, "\x1b[0m")?;
+        write!(handle, "\x1b[0m\x1b[1;1H")?;
         handle.flush()
     }
 }
