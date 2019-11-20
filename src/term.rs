@@ -6,6 +6,7 @@ use signal_hook::iterator::Signals;
 use termios::*;
 use std::thread::JoinHandle;
 use std::ops::{Deref, DerefMut};
+use crossbeam_channel::{Receiver, Sender};
 
 macro_rules! terminal_mixin {
     ($name:ident, drop(&mut $self:ident) { $($code:tt)* }) => {
@@ -59,7 +60,13 @@ pub trait Terminal where Self: Sized {
     }
 
     fn terminal_resizes(self) -> io::Result<TerminalResizes<Self>> {
-        let mut resizes = TerminalResizes { handle: None, peer: self };
+        let (tx, rx) = crossbeam_channel::bounded(0);
+        let mut resizes = TerminalResizes {
+            resizes_process: None,
+            tx,
+            rx,
+            peer: self
+        };
         resizes.listen_to_resizes()?;
         Ok(resizes)
     }
@@ -197,45 +204,47 @@ impl<T: Terminal> MouseInput<T> {
     }
 }
 
-terminal_mixin!(MouseInput, drop(&mut self) { self.dont_listen_to_mouse().unwrap() });
+terminal_mixin!(MouseInput, drop(&mut self) {
+    self.dont_listen_to_mouse().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(30));
+});
 
 pub struct TerminalResizes<T: Terminal> {
-    handle: Option<(Signals, JoinHandle<()>)>,
+    resizes_process: Option<(Signals, JoinHandle<()>)>,
+    tx: Sender<()>,
+    rx: Receiver<()>,
     peer: T,
 }
 
-pub fn send_size() -> io::Result<()> {
-    let stdout = std::io::stdout();
-    let mut handle = stdout.lock();
-    write!(handle, "\x1b[18t")?;
-    handle.flush()
-}
-
 impl<T: Terminal> TerminalResizes<T> {
-    pub fn send_size(&self) -> io::Result<()> {
-        send_size()
-    }
-
     pub fn listen_to_resizes(&mut self) -> io::Result<()> {
         self.dont_listen_to_resizes(); // noop if not listening, need to call anyway if listening
 
         let signals = Signals::new(&[signal_hook::SIGWINCH])?;
+
+        let tx_bg = self.tx.clone();
         let signals_bg = signals.clone();
+
         let join_handle = thread::spawn(move ||
             while !signals_bg.is_closed() {
                 if signals_bg.wait().count() > 0 {
-                    match send_size() {
+                    match tx_bg.send(()) {
                         Err(_) => break,
                         _ => {}
                     }
                 }
             });
-        self.handle = Some((signals, join_handle));
+
+        self.resizes_process = Some((signals, join_handle));
         Ok(())
     }
 
+    pub fn get_resize_event_receiver(&self) -> &Receiver<()> {
+        &self.rx
+    }
+
     pub fn dont_listen_to_resizes(&mut self) {
-        if let Some((signals, join_handle)) = self.handle.take() {
+        if let Some((signals, join_handle)) = self.resizes_process.take() {
             signals.close();
             join_handle.join().expect("couldn't join on the listening thread");
         }
@@ -243,7 +252,6 @@ impl<T: Terminal> TerminalResizes<T> {
 }
 
 terminal_mixin!(TerminalResizes, drop(&mut self) { self.dont_listen_to_resizes() });
-
 
 pub struct NoWrap<T: Terminal> {
     peer: T,

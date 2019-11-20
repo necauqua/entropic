@@ -5,6 +5,9 @@ authors = ['Anton Bulakh <self@necauqua.dev>']
 edition = '2018'
 
 [dependencies]
-libc = "0.2.65"
-termios = "0.3.1"
-signal-hook = "0.1.11"
+libc = '0.2'
+termios = '0.3'
+signal-hook = '0.1'
+term_size = '0.3' # ugh, who names their crates with underscores
+crossbeam-channel = '0.4'
+

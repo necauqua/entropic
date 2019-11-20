@@ -8,6 +8,7 @@ use entropic::{
     draw::*,
 };
 use std::io;
+use crossbeam_channel::select;
 
 struct GuiState {
     terminal: Dimension,
@@ -63,8 +64,6 @@ impl GuiState {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let mut input = Events::new(std::io::stdin());
-
     let mut term = TerminalBase
         .raw()?
         .mouse_input()?
@@ -73,8 +72,20 @@ fn main() -> Result<(), Box<dyn Error>> {
         .no_wrap()?
         .alt_screen()?; // so that the switch back to primary buffer happens last
 
+    std::panic::set_hook(Box::new(|panic_info| {
+        // idk about this
+        let panic_str = format!("{}", panic_info);
+        if unsafe { libc::fork() } == 0 {
+            std::thread::sleep(std::time::Duration::from_millis(30));
+            print!("{}", panic_str);
+            std::process::exit(0);
+        }
+    }));
+
+    let (w, h) = term_size::dimensions_stdout().expect("cant get terminal dimensions, todo handle this");
+
     let mut gui = GuiState {
-        terminal: Dimension { width: 80, height: 24 },
+        terminal: Dimension { width: w as u16, height: h as u16 },
         mouse: Position::default(),
         buffer: TerminalState::new(Dimension { width: 80 * 4, height: 24 * 4 }),
         picture: Picture {
@@ -82,64 +93,76 @@ fn main() -> Result<(), Box<dyn Error>> {
             layers: vec![Layer { pixels: vec![Pixel { r: 0x3f, g: 0x3f, b: 0x3f, a: 0xff }; 32*32].into_boxed_slice() }]
         }
     };
+    gui.draw()?;
 
-    term.send_size()?;
+    let events = create_event_receiver(std::io::stdin());
 
     loop {
-        match input.next() {
-            Ok(event) => {
+        select! {
+            recv(events) -> event => {
                 match event {
-                    Event::Press('c', Modifiers::Ctrl) => break,
-                    Event::Press('q', Modifiers::None) => break,
-                    Event::Press('l', Modifiers::Ctrl) => {
-                        write!(term, "\x1b[2J\x1b[1;1H")?;
-                        term.flush()?;
+                    Ok(Ok(event)) => {
+                        match event {
+                            Event::Press('c', Modifiers::Ctrl) => break,
+                            Event::Press('q', Modifiers::None) => break,
+                            Event::Press('l', Modifiers::Ctrl) => {
+                                write!(term, "\x1b[2J\x1b[1;1H")?;
+                                term.flush()?;
+                            }
+        //                    Event::Arrow(arrow, Modifiers::None) => {
+        //                        let old_cursor = cursor;
+        //                        match arrow {
+        //                            Arrow::Up => cursor.y -= 1,
+        //                            Arrow::Down => cursor.y += 1,
+        //                            Arrow::Right => cursor.x += 1,
+        //                            Arrow::Left => cursor.x -= 1,
+        //                        }
+        //                        term.write_at((old_cursor.x - 1) / 2 * 2 + 1, old_cursor.y, "  ")?;
+        //                        term.write_at((cursor.x - 1) / 2 * 2 + 1, cursor.y, "╺╸")?;
+        //                    }
+                            Event::Press('r', Modifiers::Ctrl) => {
+                                gui.redraw()?;
+                            }
+                            Event::Mouse(_, MouseButton::Left, pos, _) => {
+                                gui.mouse = pos;
+                                let x = (pos.x - 3) / 2;
+                                let y = pos.y - 2;
+                                let pixels = &mut gui.picture.layers[0].pixels;
+                                pixels[gui.picture.size.offset(Position { x, y })] = Pixel {
+                                    r: 255, g: 255, b: 255, a: 255
+                                };
+                                gui.draw()?;
+                            }
+                            Event::Mouse(_, _, pos, _) => {
+                                gui.mouse = pos;
+                                gui.draw()?;
+                            }
+                            Event::MouseMotion(pos, _) => {
+                                gui.mouse = pos;
+                                gui.draw()?;
+                            }
+                            Event::TerminalSize(terminal_size) => {
+                                gui.terminal = terminal_size;
+                                gui.draw()?;
+                                gui.redraw()?;
+                            }
+                            _event => {
+                                write!(term, "{:?}\n\x1b[999D", _event)?;
+                                term.flush()?;
+                            }
+                        }
                     }
-//                    Event::Arrow(arrow, Modifiers::None) => {
-//                        let old_cursor = cursor;
-//                        match arrow {
-//                            Arrow::Up => cursor.y -= 1,
-//                            Arrow::Down => cursor.y += 1,
-//                            Arrow::Right => cursor.x += 1,
-//                            Arrow::Left => cursor.x -= 1,
-//                        }
-//                        term.write_at((old_cursor.x - 1) / 2 * 2 + 1, old_cursor.y, "  ")?;
-//                        term.write_at((cursor.x - 1) / 2 * 2 + 1, cursor.y, "╺╸")?;
-//                    }
-                    Event::Press('r', Modifiers::Ctrl) => {
-                        gui.redraw()?;
-                    }
-                    Event::Mouse(_, MouseButton::Left, pos, _) => {
-                        gui.mouse = pos;
-                        let x = (pos.x - 3) / 2;
-                        let y = pos.y - 2;
-                        let pixels = &mut gui.picture.layers[0].pixels;
-                        pixels[gui.picture.size.offset(Position { x, y })] = Pixel {
-                            r: 255, g: 255, b: 255, a: 255
-                        };
-                        gui.draw()?;
-                    }
-                    Event::Mouse(_, _, pos, _) => {
-                        gui.mouse = pos;
-                        gui.draw()?;
-                    }
-                    Event::MouseMotion(pos, _) => {
-                        gui.mouse = pos;
-                        gui.draw()?;
-                    }
-                    Event::TerminalSize(terminal_size) => {
-                        gui.terminal = terminal_size;
-                        gui.draw()?;
-                        gui.redraw()?;
-                    }
-                    _event => {
-                        write!(term, "{:?}\n\x1b[999D", _event)?;
-                        term.flush()?;
-                    }
+                    Ok(Err(e)) => return Err(Box::new(e)),
+                    Err(e) => return Err(Box::new(e)),
                 }
             }
-            Err(e) => return Err(Box::new(e)),
-        }
+            recv(term.get_resize_event_receiver()) -> _ => {
+                let (w, h) = term_size::dimensions_stdout().expect("cant get terminal dimensions, todo handle this");
+                gui.terminal = Dimension { width: w as u16, height: h as u16 };
+                gui.draw()?;
+                gui.redraw()?;
+            }
+        };
     }
 
     Ok(())

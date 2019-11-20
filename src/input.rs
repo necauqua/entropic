@@ -1,7 +1,7 @@
 use std::{io, thread};
 use std::io::{ErrorKind, Read};
-use std::sync::mpsc;
-use std::sync::mpsc::{Receiver, Sender};
+use crossbeam_channel;
+use crossbeam_channel::{Receiver, Sender};
 
 use crate::state::{Dimension, Position};
 
@@ -72,10 +72,6 @@ pub enum Event {
     TerminalSize(Dimension),
 
     UnknownByteSequence(Vec<u8>),
-}
-
-pub struct Events {
-    rx: Receiver<io::Result<Event>>
 }
 
 fn parse_decimal(bytes: &[u8]) -> u16 {
@@ -268,15 +264,23 @@ fn parse_input_sequence(bytes: &[u8]) -> (Event, usize) {
     }
 }
 
-/// Spawn a thread that will read the data from given input forever
-/// and will try to parse it into a stream of events.
-/// It sends those events into the given sender.
+/// Creates a new instance of the receiver of the console events
+/// that might be read from the given input.
+///
+/// It spins up a thread that will read the input forever, with no
+/// means of stopping it other than closing the input or the receiver.
+/// How the input closes depends on its implementation, but you can
+/// simply drop the receiver.
+/// Note that the thread would only close after it goes out of being
+/// blocked by receiving some data from the input.
 ///
 /// The algorithm relies on the fact that it reads individual key presses
 /// as separate chunks, and when it receives a lot of bytes at once
 /// it tries to parse sequences of them, checking how many bytes they consumed and
 /// storing the excesses (when receiving events rapidly enough) for the next iterations
-fn spawn_reader<R: Read + Send + 'static>(mut input: R, tx: Sender<io::Result<Event>>) {
+///
+pub fn create_event_receiver<R: Read + Send + 'static>(mut input: R) -> Receiver<io::Result<Event>> {
+    let (tx, rx) = crossbeam_channel::unbounded();
     thread::spawn(move || {
         let mut offset = 0;
         // mouse event with both coords >100 takes 13 bytes, max found yet
@@ -309,31 +313,5 @@ fn spawn_reader<R: Read + Send + 'static>(mut input: R, tx: Sender<io::Result<Ev
             }
         }
     });
-}
-
-impl Events {
-    /// Creates a new instance of the receiver of the console events
-    /// that might be read from the given input.
-    ///
-    /// It spins up a thread that will read the input forever, with no
-    /// means of stopping it other than closing the input or the receiver.
-    /// How the input closes depends on its implementation, but you can
-    /// simply drop this object to close the underlying receiver.
-    /// Note that the thread would only close after it goes out of being
-    /// blocked by receiving some data from the input.
-    ///
-    /// This receiver is basically a wrapper over the Receiver type,
-    /// and the spun up thread uses its connected Sender.
-    pub fn new<R: Read + Send + 'static>(input: R) -> Events {
-        let (tx, rx) = mpsc::channel();
-        spawn_reader(input, tx);
-        Events { rx }
-    }
-
-    /// Blocks (or not) until a console event occurs and returns it.
-    /// The returned type might be an error if some low-level IO error occurs.
-    pub fn next(&mut self) -> io::Result<Event> {
-        // SendError never occurs unless the stdin is closed, and this should not happen
-        return self.rx.recv().unwrap();
-    }
+    rx
 }
