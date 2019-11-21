@@ -4,6 +4,7 @@ use std::fmt::{Debug, Formatter, Error};
 use crate::draw::Drawable;
 use std::io::{Write, StdoutLock};
 use std::io;
+use std::ops::{Add, Sub};
 
 #[derive(Copy, Clone, Default)]
 pub struct Pixel {
@@ -47,6 +48,22 @@ pub struct Dimension {
 pub struct Position {
     pub x: u16,
     pub y: u16,
+}
+
+impl Add for Position {
+    type Output = Position;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        Position { x: self.x + rhs.x, y: self.x + rhs.y }
+    }
+}
+
+impl Sub for Position {
+    type Output = Position;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        Position { x: self.x - rhs.x, y: self.x - rhs.y }
+    }
 }
 
 impl Drawable for Position {

@@ -22,12 +22,12 @@ pub enum MouseWheelDirection {
 pub enum Modifiers {
     // made as an enum for simpler matching
     None,
-    Ctrl,
-    Alt,
     Shift,
-    CtrlAlt,
+    Alt,
+    AltShift,
+    Ctrl,
     CtrlShift,
-    ShiftAlt,
+    CtrlAlt,
     CtrlShiftAlt,
 }
 
@@ -140,7 +140,7 @@ fn parse_mods(byte: u8) -> Option<Modifiers> {
     match byte {
         50 => Some(Modifiers::Shift),
         51 => Some(Modifiers::Alt),
-        52 => Some(Modifiers::ShiftAlt),
+        52 => Some(Modifiers::AltShift),
         53 => Some(Modifiers::Ctrl),
         54 => Some(Modifiers::CtrlShift),
         55 => Some(Modifiers::CtrlAlt),
@@ -188,7 +188,7 @@ fn parse_input_sequence(bytes: &[u8]) -> (Event, usize) {
         } else {
             let ch = char::from(b);
             if ch.is_ascii_uppercase() {
-                Event::Press(ch.to_ascii_lowercase(), Modifiers::ShiftAlt)
+                Event::Press(ch.to_ascii_lowercase(), Modifiers::AltShift)
             } else {
                 Event::Press(ch, Modifiers::Alt)
             }
@@ -231,13 +231,16 @@ fn parse_input_sequence(bytes: &[u8]) -> (Event, usize) {
             if b == 1000 || x == 1000 || y == 1000 {
                 fail!(bytes);
             }
-//            println!("{:0>8b}", b);
             let pos = Position { x, y };
-            let mods = match (b & 0b11000) >> 3 {
-                0 => Modifiers::None,
-                1 => Modifiers::Alt,
-                2 => Modifiers::Ctrl,
-                3 => Modifiers::CtrlAlt,
+            let mods = match (b & 0b11100) >> 2 {
+                0b000 => Modifiers::None,
+                0b001 => Modifiers::Shift,
+                0b010 => Modifiers::Alt,
+                0b011 => Modifiers::AltShift,
+                0b100 => Modifiers::Ctrl,
+                0b101 => Modifiers::CtrlShift,
+                0b110 => Modifiers::CtrlAlt,
+                0b111 => Modifiers::CtrlShiftAlt,
                 _ => unreachable!(),
             };
             if b & 0b1000000 != 0 { // wheel bit

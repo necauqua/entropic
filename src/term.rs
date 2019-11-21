@@ -47,8 +47,8 @@ pub trait Terminal where Self: Sized {
         Ok(alt_screen)
     }
 
-    fn cursor_control(self) -> io::Result<CursorControl<Self>> {
-        let cursor_control = CursorControl { peer: self };
+    fn hide_cursor(self) -> io::Result<HideCursor<Self>> {
+        let cursor_control = HideCursor { peer: self };
         cursor_control.set_cursor_hidden()?;
         Ok(cursor_control)
     }
@@ -78,6 +78,7 @@ pub trait Terminal where Self: Sized {
     }
 }
 
+#[derive(Clone)]
 pub struct TerminalBase;
 
 impl Terminal for TerminalBase {}
@@ -92,6 +93,7 @@ impl Write for TerminalBase {
     }
 }
 
+#[derive(Clone)]
 pub struct Raw<T: Terminal> {
     prev_ios: Termios,
     peer: T,
@@ -112,6 +114,7 @@ impl<T: Terminal> Raw<T> {
 
 terminal_mixin!(Raw, drop(&mut self) { self.normal_mode().unwrap() });
 
+#[derive(Clone)]
 pub struct AltScreen<T: Terminal> {
     peer: T,
 }
@@ -134,11 +137,12 @@ impl<T: Terminal> AltScreen<T> {
 
 terminal_mixin!(AltScreen, drop(&mut self) { self.switch_to_normal().unwrap() });
 
-pub struct CursorControl<T: Terminal> {
+#[derive(Clone)]
+pub struct HideCursor<T: Terminal> {
     peer: T,
 }
 
-impl<T: Terminal> CursorControl<T> {
+impl<T: Terminal> HideCursor<T> {
     pub fn set_cursor_hidden(&self) -> io::Result<()> {
         let stdout = std::io::stdout();
         let mut handle = stdout.lock();
@@ -152,38 +156,11 @@ impl<T: Terminal> CursorControl<T> {
         handle.write_all(b"\x1b[?25h")?;
         handle.flush()
     }
-
-    pub fn cursor_push(&self) -> io::Result<()> {
-        let stdout = std::io::stdout();
-        let mut handle = stdout.lock();
-        handle.write_all(b"\x1b[s")?;
-        handle.flush()
-    }
-
-    pub fn cursor_pop(&self) -> io::Result<()> {
-        let stdout = std::io::stdout();
-        let mut handle = stdout.lock();
-        handle.write_all(b"\x1b[u")?;
-        handle.flush()
-    }
-
-    pub fn cursor_move(&self, x: u16, y: u16) -> io::Result<()> {
-        let stdout = std::io::stdout();
-        let mut handle = stdout.lock();
-        write!(handle, "\x1b[{1};{0}H", x, y)?;
-        handle.flush()
-    }
-
-    pub fn write_at(&self, x: u16, y: u16, s: &str) -> io::Result<()> {
-        let stdout = std::io::stdout();
-        let mut handle = stdout.lock();
-        write!(handle, "\x1b[s\x1b[{1};{0}H{2}\x1b[u", x, y, s)?;
-        handle.flush()
-    }
 }
 
-terminal_mixin!(CursorControl, drop(&mut self) { self.set_cursor_visible().unwrap() });
+terminal_mixin!(HideCursor, drop(&mut self) { self.set_cursor_visible().unwrap() });
 
+#[derive(Clone)]
 pub struct MouseInput<T: Terminal> {
     peer: T,
 }
@@ -200,14 +177,14 @@ impl<T: Terminal> MouseInput<T> {
         let stdout = std::io::stdout();
         let mut handle = stdout.lock();
         handle.write_all(b"\x1b[?1003l\x1b[?1006l")?;
-        handle.flush()
+        handle.flush()?;
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        // ↑ this is needed so that the terminal has time to actually disable mouse input
+        Ok(())
     }
 }
 
-terminal_mixin!(MouseInput, drop(&mut self) {
-    self.dont_listen_to_mouse().unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(30));
-});
+terminal_mixin!(MouseInput, drop(&mut self) { self.dont_listen_to_mouse().unwrap(); });
 
 pub struct TerminalResizes<T: Terminal> {
     resizes_process: Option<(Signals, JoinHandle<()>)>,
@@ -253,6 +230,7 @@ impl<T: Terminal> TerminalResizes<T> {
 
 terminal_mixin!(TerminalResizes, drop(&mut self) { self.dont_listen_to_resizes() });
 
+#[derive(Clone)]
 pub struct NoWrap<T: Terminal> {
     peer: T,
 }

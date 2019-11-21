@@ -10,4 +10,5 @@ termios = '0.3'
 signal-hook = '0.1'
 term_size = '0.3' # ugh, who names their crates with underscores
 crossbeam-channel = '0.4'
+color-backtrace = '0.3'
 
