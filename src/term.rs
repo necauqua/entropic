@@ -1,12 +1,12 @@
 use std::io;
-use std::io::{Write, Error};
+use std::io::{Error, Write};
+use std::ops::{Deref, DerefMut};
 use std::thread;
+use std::thread::JoinHandle;
 
+use crossbeam_channel::{Receiver, Sender};
 use signal_hook::iterator::Signals;
 use termios::*;
-use std::thread::JoinHandle;
-use std::ops::{Deref, DerefMut};
-use crossbeam_channel::{Receiver, Sender};
 
 macro_rules! terminal_mixin {
     ($name:ident, drop(&mut $self:ident) { $($code:tt)* }) => {

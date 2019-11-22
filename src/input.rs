@@ -1,11 +1,12 @@
 use std::{io, thread};
 use std::io::{ErrorKind, Read};
+
 use crossbeam_channel;
-use crossbeam_channel::{Receiver, Sender};
+use crossbeam_channel::Receiver;
 
 use crate::state::{Dimension, Position};
 
-#[derive(Debug)]
+#[derive(Copy, Clone, Debug)]
 pub enum MouseButton {
     Left,
     Middle,
@@ -228,10 +229,10 @@ fn parse_input_sequence(bytes: &[u8]) -> (Event, usize) {
 
         _ if code.len() > 1 && code[0] == 60 => {
             let ([b, x, y], read) = read_params(&code[1..], 109, 77);
-            if b == 1000 || x == 1000 || y == 1000 {
+            if b == 1000 || x == 1000 || y == 1000 || x == 0 || y == 0 {
                 fail!(bytes);
             }
-            let pos = Position { x, y };
+            let pos = Position { x: x - 1, y: y - 1 };
             let mods = match (b & 0b11100) >> 2 {
                 0b000 => Modifiers::None,
                 0b001 => Modifiers::Shift,

@@ -1,20 +1,33 @@
+use std::cell::RefCell;
 use std::error::Error;
+use std::io;
 use std::io::Write;
+use std::rc::Rc;
+
+use crossbeam_channel::select;
 
 use entropic::{
-    term::*,
+    draw::*,
     input::*,
     state::*,
-    draw::*,
+    term::*,
 };
-use std::io;
-use crossbeam_channel::select;
+
+trait Widget {
+    fn draw(&self, gui: &mut GuiState) -> io::Result<()>;
+
+    fn get_bounds(&self) -> (Position, Dimension);
+
+    fn on_mouse_input(&mut self, _: MouseAction, _: MouseButton, _: Position, _: Modifiers) -> io::Result<()> {
+        Ok(())
+    }
+}
 
 struct TheField {
     picture: Picture
 }
 
-impl TheField {
+impl Widget for TheField {
     fn draw(&self, gui: &mut GuiState) -> io::Result<()> {
         let Dimension { width, height } = self.picture.size.min(gui.terminal);
 
@@ -55,15 +68,51 @@ impl TheField {
 
         Ok(())
     }
+
+    fn get_bounds(&self) -> (Position, Dimension) {
+        let Dimension { width, height } = self.picture.size;
+        (Position { x: 0, y: 0 }, Dimension { width: width * 2 + 1, height: height + 1 })
+    }
+
+    fn on_mouse_input(&mut self, _: MouseAction, button: MouseButton, pos: Position, _: Modifiers) -> io::Result<()> {
+        let pic = &mut self.picture;
+        let size = pic.size;
+        let pos = Position { x: pos.x / 2, ..pos };
+        if pos.x >= 1 && pos.y >= 1 {
+            let pos = pos - Position { x: 1, y: 1 };
+            let pixels = &mut pic.layers[0].pixels;
+            pixels[size.offset(pos)] = Pixel {
+                r: 255,
+                g: match button { MouseButton::Left => 255, _ => 0 },
+                b: 255,
+                a: 255,
+            };
+        }
+        Ok(())
+    }
 }
 
 struct GuiState {
     terminal: Dimension,
     mouse: Position,
     buffer: TerminalState,
+    widgets: Rc<RefCell<Vec<Box<dyn Widget>>>>,
 }
 
 impl GuiState {
+    pub fn for_each_widget(&mut self, mut f: impl FnMut(&mut Self, &mut dyn Widget) -> io::Result<()>) -> io::Result<()> {
+        let rc = self.widgets.clone();
+        let mut widgets = (*rc).borrow_mut();
+        for widget in widgets.iter_mut() {
+            f(self, &mut **widget)?;
+        }
+        Ok(())
+    }
+
+    fn draw(&mut self) -> io::Result<()> {
+        self.for_each_widget(|gui, widget| widget.draw(gui))
+    }
+
     fn redraw(&mut self) -> io::Result<()> {
         self.buffer.redraw(self.terminal)
     }
@@ -84,8 +133,8 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let hook = color_backtrace::create_panic_handler(color_backtrace::Settings::default());
     std::panic::set_hook(Box::new(move |panic_info| {
-        // apparently panic info is printed before unwinding,
-        // so drop calls happen only after the panic is printed
+        // apparently panic info prints before unwinding,
+        // so drop calls happen only after its already printed
         let _ = term_hook.dont_listen_to_mouse();
         let _ = term_hook.switch_to_normal();
         let _ = term_hook.normal_mode();
@@ -97,21 +146,23 @@ fn main() -> Result<(), Box<dyn Error>> {
         print!("\x1b[s");
     }));
 
-    let (w, h) = term_size::dimensions_stdout().expect("cant get terminal dimensions, todo handle this");
-
-    let mut field = TheField {
-        picture: Picture {
-            size: Dimension { width: 32, height: 32 },
-            layers: vec![Layer { pixels: vec![Pixel { r: 0x3f, g: 0x3f, b: 0x3f, a: 0xff }; 32 * 32].into_boxed_slice() }],
-        }
-    };
+    let (w, h) = term_size::dimensions_stdout().expect("can't get terminal dimensions, todo handle this");
 
     let mut gui = GuiState {
         terminal: Dimension { width: w as u16, height: h as u16 },
         mouse: Position::default(),
         buffer: TerminalState::new(Dimension { width: 80 * 4, height: 24 * 4 }),
+        widgets: Rc::new(RefCell::new(vec![
+            Box::new(TheField {
+                picture: Picture {
+                    size: Dimension { width: 32, height: 32 },
+                    layers: vec![Layer { pixels: vec![Pixel { r: 0x3f, g: 0x3f, b: 0x3f, a: 0xff }; 32 * 32].into_boxed_slice() }],
+                }
+            })
+        ])),
     };
-    field.draw(&mut gui)?;
+
+    gui.draw()?;
 
     let events = create_event_receiver(std::io::stdin());
 
@@ -141,27 +192,30 @@ fn main() -> Result<(), Box<dyn Error>> {
                             Event::Press('r', Modifiers::Ctrl) => {
                                 gui.redraw()?;
                             }
-                            Event::Mouse(_, MouseButton::Left, pos, _) => {
-                                gui.mouse = pos;
-                                let x = (pos.x - 3) / 2;
-                                let y = pos.y - 2;
-                                let pixels = &mut field.picture.layers[0].pixels;
-                                pixels[field.picture.size.offset(Position { x, y })] = Pixel {
-                                    r: 255, g: 255, b: 255, a: 255
-                                };
-                                field.draw(&mut gui)?;
-                            }
-                            Event::Mouse(_, _, pos, _) => {
-                                gui.mouse = pos;
-                                field.draw(&mut gui)?;
+                            Event::Mouse(action, button, mouse, modifiers) => {
+                                gui.mouse = mouse;
+                                gui.for_each_widget(|_, widget| {
+                                    let (pos, size) = widget.get_bounds();
+
+                                    if mouse.x > pos.x &&
+                                        mouse.y > pos.y &&
+                                        mouse.x <= pos.x + size.width &&
+                                        mouse.y <= pos.y + size.height
+                                    {
+                                        widget.on_mouse_input(action, button, mouse - pos, modifiers)?;
+                                    }
+
+                                    Ok(())
+                                })?;
+                                gui.draw()?;
                             }
                             Event::MouseMotion(pos, _) => {
                                 gui.mouse = pos;
-                                field.draw(&mut gui)?;
+                                gui.draw()?;
                             }
                             Event::TerminalSize(terminal_size) => {
                                 gui.terminal = terminal_size;
-                                field.draw(&mut gui)?;
+                                gui.draw()?;
                                 gui.redraw()?;
                             }
                             _event => {
@@ -175,9 +229,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                 }
             }
             recv(resizes_rx) -> _ => {
-                let (w, h) = term_size::dimensions_stdout().expect("cant get terminal dimensions, todo handle this");
+                let (w, h) = term_size::dimensions_stdout().expect("can't get terminal dimensions, todo handle this");
                 gui.terminal = Dimension { width: w as u16, height: h as u16 };
-                field.draw(&mut gui)?;
+                gui.draw()?;
                 gui.redraw()?;
             }
         }

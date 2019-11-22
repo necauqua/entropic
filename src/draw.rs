@@ -1,6 +1,7 @@
-use std::io::{Write, StdoutLock};
+use std::io::{StdoutLock, Write};
 use std::io;
-use crate::state::{Dimension, Position, Pixel};
+
+use crate::state::{Dimension, Pixel, Position};
 
 pub trait Drawable {
 

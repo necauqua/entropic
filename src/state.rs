@@ -1,10 +1,11 @@
 #![allow(unused)]
 
-use std::fmt::{Debug, Formatter, Error};
-use crate::draw::Drawable;
-use std::io::{Write, StdoutLock};
+use std::fmt::{Debug, Error, Formatter};
+use std::io::{StdoutLock, Write};
 use std::io;
 use std::ops::{Add, Sub};
+
+use crate::draw::Drawable;
 
 #[derive(Copy, Clone, Default)]
 pub struct Pixel {
@@ -54,7 +55,7 @@ impl Add for Position {
     type Output = Position;
 
     fn add(self, rhs: Self) -> Self::Output {
-        Position { x: self.x + rhs.x, y: self.x + rhs.y }
+        Position { x: self.x + rhs.x, y: self.y + rhs.y }
     }
 }
 
@@ -62,7 +63,7 @@ impl Sub for Position {
     type Output = Position;
 
     fn sub(self, rhs: Self) -> Self::Output {
-        Position { x: self.x - rhs.x, y: self.x - rhs.y }
+        Position { x: self.x - rhs.x, y: self.y - rhs.y }
     }
 }
 
