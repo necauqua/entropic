@@ -4,7 +4,7 @@ use std::io::{ErrorKind, Read};
 use crossbeam_channel;
 use crossbeam_channel::Receiver;
 
-use crate::state::{Dimension, Position};
+use crate::state::Position;
 
 #[derive(Copy, Clone, Debug)]
 pub enum MouseButton {
@@ -69,8 +69,6 @@ pub enum Event {
     Mouse(MouseAction, MouseButton, Position, Modifiers),
     MouseMotion(Position, Modifiers),
     MouseWheel(MouseWheelDirection, Position, Modifiers),
-
-    TerminalSize(Dimension),
 
     UnknownByteSequence(Vec<u8>),
 }
@@ -216,15 +214,6 @@ fn parse_input_sequence(bytes: &[u8]) -> (Event, usize) {
                 Some(arrow) => (Event::Arrow(arrow, parse_mods(*mods).unwrap()), 6),
                 _ => fail!(bytes)
             }
-        }
-
-        // CSI '8' ';' height ';' width 't'
-        _ if code.len() > 2 && code[0] == 56 && code[1] == 59 => {
-            let ([height, width, extra], read) = read_params(&code[2..], 116, 116);
-            if height == 1000 || width == 1000 || extra != 0 {
-                fail!(bytes);
-            }
-            (Event::TerminalSize(Dimension { width, height }), read + 4)
         }
 
         _ if code.len() > 1 && code[0] == 60 => {

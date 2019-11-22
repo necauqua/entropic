@@ -12,6 +12,7 @@ use entropic::{
     state::*,
     term::*,
 };
+use std::fs::OpenOptions;
 
 trait Widget {
     fn draw(&self, gui: &mut GuiState) -> io::Result<()>;
@@ -213,14 +214,10 @@ fn main() -> Result<(), Box<dyn Error>> {
                                 gui.mouse = pos;
                                 gui.draw()?;
                             }
-                            Event::TerminalSize(terminal_size) => {
-                                gui.terminal = terminal_size;
-                                gui.draw()?;
-                                gui.redraw()?;
-                            }
                             _event => {
-                                write!(term, "{:?}\n\x1b[999D", _event)?;
-                                term.flush()?;
+                                // heheh, funny debug thing
+                                let _ = OpenOptions::new().write(true).open("/dev/pts/1")
+                                    .map(|mut f| writeln!(f, "{:?}", _event));
                             }
                         }
                     }
