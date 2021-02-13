@@ -81,12 +81,11 @@ impl Widget for TheField {
         let pos = Position { x: pos.x / 2, ..pos };
         if pos.x >= 1 && pos.y >= 1 {
             let pos = pos - Position { x: 1, y: 1 };
-            let pixels = &mut pic.layers[0].pixels;
-            pixels[size.offset(pos)] = Pixel {
-                r: 255,
-                g: match button { MouseButton::Left => 255, _ => 0 },
-                b: 255,
-                a: 255,
+            let pixels = &mut pic.layers[1].pixels;
+
+            pixels[size.offset(pos)] = match button {
+                MouseButton::Left => Pixel { r: 255, g: 255, b: 255, a: 255},
+                _ => Pixel { r: 0x0, g: 0x0, b: 0x0, a: 0x00 },
             };
         }
         Ok(())
@@ -157,7 +156,10 @@ fn main() -> Result<(), Box<dyn Error>> {
             Box::new(TheField {
                 picture: Picture {
                     size: Dimension { width: 32, height: 32 },
-                    layers: vec![Layer { pixels: vec![Pixel { r: 0x3f, g: 0x3f, b: 0x3f, a: 0xff }; 32 * 32].into_boxed_slice() }],
+                    layers: vec![
+                        Layer { pixels: vec![Pixel { r: 0x3f, g: 0x3f, b: 0x3f, a: 0xff }; 32 * 32].into_boxed_slice() },
+                        Layer { pixels: vec![Pixel { r: 0x0, g: 0x0, b: 0x0, a: 0x00 }; 32 * 32].into_boxed_slice() },
+                    ],
                 }
             })
         ])),
