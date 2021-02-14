@@ -5,7 +5,7 @@ use std::thread;
 use std::thread::JoinHandle;
 
 use crossbeam_channel::{Receiver, Sender};
-use signal_hook::iterator::Signals;
+use signal_hook::iterator::{Signals, Handle as SignalsHandle};
 use termios::*;
 
 macro_rules! terminal_mixin {
@@ -187,7 +187,7 @@ impl<T: Terminal> MouseInput<T> {
 terminal_mixin!(MouseInput, drop(&mut self) { self.dont_listen_to_mouse().unwrap(); });
 
 pub struct TerminalResizes<T: Terminal> {
-    resizes_process: Option<(Signals, JoinHandle<()>)>,
+    resizes_process: Option<(SignalsHandle, JoinHandle<()>)>,
     tx: Sender<()>,
     rx: Receiver<()>,
     peer: T,
@@ -197,14 +197,14 @@ impl<T: Terminal> TerminalResizes<T> {
     pub fn listen_to_resizes(&mut self) -> io::Result<()> {
         self.dont_listen_to_resizes(); // noop if not listening, need to call anyway if listening
 
-        let signals = Signals::new(&[signal_hook::SIGWINCH])?;
+        let mut signals = Signals::new(&[signal_hook::consts::SIGWINCH])?;
 
         let tx_bg = self.tx.clone();
-        let signals_bg = signals.clone();
+        let signals_handle = signals.handle();
 
         let join_handle = thread::spawn(move ||
-            while !signals_bg.is_closed() {
-                if signals_bg.wait().count() > 0 {
+            while !signals.is_closed() {
+                if signals.wait().count() > 0 {
                     match tx_bg.send(()) {
                         Err(_) => break,
                         _ => {}
@@ -212,7 +212,7 @@ impl<T: Terminal> TerminalResizes<T> {
                 }
             });
 
-        self.resizes_process = Some((signals, join_handle));
+        self.resizes_process = Some((signals_handle, join_handle));
         Ok(())
     }
 

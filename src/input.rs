@@ -83,7 +83,7 @@ fn parse_decimal(bytes: &[u8]) -> u16 {
             res = res * 10 + (byte - 48) as u16;
         } else {
             return 1000;
-        };
+        }
     }
     res
 }
@@ -91,7 +91,7 @@ fn parse_decimal(bytes: &[u8]) -> u16 {
 // this is so stupid, ikr
 // idk for what reason I fear allocations in low-level parsing,
 // or why I do this lowest-level stupid parsing at all
-// this stupid rust newcomer disease I guess ¯\_(ツ)_/¯
+// this a dumb rust newcomer disease I guess ¯\_(ツ)_/¯
 fn read_params(bytes: &[u8], until: u8, until2: u8) -> ([u16; 3], usize) {
     let mut res = [0; 3];
     let mut buf = [0; 3];
@@ -182,15 +182,14 @@ fn parse_input_sequence(bytes: &[u8]) -> (Event, usize) {
     }
     if bytes.len() == 2 {
         let b = bytes[1];
-        return (if b < 32 {
-            Event::Press(char::from(b + 96), Modifiers::CtrlAlt)
+        if b < 32 {
+            return (Event::Press(char::from(b + 96), Modifiers::CtrlAlt), 2);
+        }
+        let ch = char::from(b);
+        return (if ch.is_ascii_uppercase() {
+            Event::Press(ch.to_ascii_lowercase(), Modifiers::AltShift)
         } else {
-            let ch = char::from(b);
-            if ch.is_ascii_uppercase() {
-                Event::Press(ch.to_ascii_lowercase(), Modifiers::AltShift)
-            } else {
-                Event::Press(ch, Modifiers::Alt)
-            }
+            Event::Press(ch, Modifiers::Alt)
         }, 2);
     }
     // all other ones start with CSI (ESC+[)
